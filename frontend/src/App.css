@@ -114,16 +114,24 @@
   gap: 10px;
 }
 
+button {
+  cursor: pointer;
+  pointer-events: auto;
+}
+
 .primary,
 .secondary,
 .link,
 .chip,
-.tab {
+.tab,
+.nav-item {
   border: 0;
   border-radius: 999px;
   padding: 10px 14px;
   cursor: pointer;
   font-weight: 600;
+  position: relative;
+  z-index: 1;
 }
 
 .primary {

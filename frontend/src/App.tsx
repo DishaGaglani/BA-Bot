@@ -1,38 +1,77 @@
-import { useState } from 'react'
+import { useEffect, useState, type FormEvent, type ChangeEvent } from 'react'
 import './App.css'
 
-const initialProject = {
-  project: {
-    name: 'Retail Inventory AI',
-    department: 'Operations',
-    sponsor: 'John Doe',
-  },
-  overview: {
-    description: 'AI system for inventory forecasting and replenishment across retail stores.',
-    stakeholders: ['Store Managers', 'Warehouse Staff', 'Finance Lead'],
-  },
-  discovery: {
-    business_problem: 'Store teams struggle to forecast demand and prevent stockouts.',
-    business_goals: 'Reduce stockouts, improve service levels, and save planner time.',
-    desired_outcomes: 'Faster replenishment and better inventory visibility.',
-    constraints: 'Must integrate with current ERP and support offline use in stores.',
-  },
-  functional_requirements: [
-    { title: 'Barcode Scanning', priority: 'High', confidence: 0.96 },
-    { title: 'Demand Forecasting', priority: 'High', confidence: 0.91 },
-    { title: 'Reorder Recommendations', priority: 'Medium', confidence: 0.88 },
-  ],
-  missing_fields: ['KPIs', 'ERP Integration', 'Security Review'],
-  next_question: 'What ERP system do you currently use?',
+type PageView = 'dashboard' | 'new-project' | 'interview' | 'review' | 'export'
+type MessageRole = 'ai' | 'user'
+type UpdateSection = 'project' | 'overview' | 'discovery'
+
+interface Requirement {
+  title: string
+  priority: string
+  confidence: number
 }
 
-const initialMessages = [
+interface ProjectData {
+  project: {
+    name: string
+    department: string
+    sponsor: string
+    business_unit: string
+    expected_completion: string
+  }
+  overview: {
+    description: string
+    stakeholders: string[]
+  }
+  discovery: {
+    business_problem: string
+    business_goals: string
+    desired_outcomes: string
+    constraints: string
+  }
+  functional_requirements: Requirement[]
+  missing_fields: string[]
+  next_question: string
+}
+
+interface Message {
+  role: MessageRole
+  text: string
+}
+
+interface Notice {
+  title: string
+  detail: string
+}
+
+const initialProject: ProjectData = {
+  project: {
+    name: '',
+    department: '',
+    sponsor: '',
+    business_unit: '',
+    expected_completion: '',
+  },
+  overview: {
+    description: '',
+    stakeholders: [],
+  },
+  discovery: {
+    business_problem: '',
+    business_goals: '',
+    desired_outcomes: '',
+    constraints: '',
+  },
+  functional_requirements: [],
+  missing_fields: [],
+  next_question: '',
+}
+
+const initialMessages: Message[] = [
   { role: 'ai', text: 'Hello. Tell me about your project and the business problem you want to solve.' },
-  { role: 'user', text: 'We need a retail inventory solution for our stores and warehouse planning.' },
-  { role: 'ai', text: 'Great. I will capture the business goals, stakeholders, and the core requirements for the workflow.' },
 ]
 
-const navItems = [
+const navItems: Array<{ id: PageView; label: string }> = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'new-project', label: 'New Project' },
   { id: 'interview', label: 'Interview Workspace' },
@@ -41,11 +80,28 @@ const navItems = [
 ]
 
 function App() {
-  const [activePage, setActivePage] = useState('dashboard')
-  const [projectData, setProjectData] = useState(initialProject)
-  const [messages, setMessages] = useState(initialMessages)
-  const [draftInput, setDraftInput] = useState('')
-  const [notice, setNotice] = useState(null)
+  const [activePage, setActivePage] = useState<PageView>('dashboard')
+  const [projectData, setProjectData] = useState<ProjectData>(initialProject)
+  const [messages, setMessages] = useState<Message[]>(initialMessages)
+  const [draftInput, setDraftInput] = useState<string>('')
+  const [notice, setNotice] = useState<Notice | null>(null)
+  const [isLoading, setIsLoading] = useState<boolean>(false)
+
+  useEffect(() => {
+    const syncProjectData = async () => {
+      try {
+        await fetch('http://127.0.0.1:8000/api/project', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(projectData),
+        })
+      } catch (error) {
+        console.error('Failed to sync project data', error)
+      }
+    }
+
+    void syncProjectData()
+  }, [projectData])
 
   const completion = Math.round(
     (Number(Boolean(projectData.project.name)) +
@@ -66,33 +122,75 @@ function App() {
     { label: 'Approval', complete: projectData.missing_fields.length < 2 },
   ]
 
-  const handleSend = (event) => {
+  const handleSend = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!draftInput.trim()) return
-
     const incoming = draftInput.trim()
-    const lower = incoming.toLowerCase()
+    if (!incoming) return
 
     setMessages((prev) => [...prev, { role: 'user', text: incoming }])
-
-    const response = lower.includes('erp')
-      ? 'I will capture the ERP dependency and flag it in the missing information panel.'
-      : 'I have captured that input and I will keep advancing the discovery flow.'
-
-    if (lower.includes('kpi') || lower.includes('requirement')) {
-      setNotice({ title: 'Requirement Added', detail: 'Business goal captured with confidence' })
-      setTimeout(() => setNotice(null), 1800)
-    }
-
-    setMessages((prev) => [...prev, { role: 'ai', text: response }])
     setDraftInput('')
+    setIsLoading(true)
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/predict', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: incoming }),
+      })
+
+      const payload = (await response.json()) as {
+        status?: string
+        data?: Record<string, unknown>
+        detail?: unknown
+      }
+
+      const lower = incoming.toLowerCase()
+      const replyText = typeof payload?.data?.text === 'string'
+        ? payload.data.text
+        : typeof payload?.data?.reply === 'string'
+          ? payload.data.reply
+          : typeof payload?.data?.message === 'string'
+            ? payload.data.message
+            : typeof payload?.data?.output === 'object' && payload.data.output !== null && 'content' in payload.data.output
+              ? String((payload.data.output as { content?: unknown }).content ?? '')
+              : typeof payload?.detail === 'string'
+                ? payload.detail
+                : 'I have captured that input and I will keep advancing the discovery flow.'
+
+      setMessages((prev) => [...prev, { role: 'ai', text: replyText }])
+
+      if (lower.includes('kpi') || lower.includes('requirement')) {
+        setNotice({ title: 'Requirement Added', detail: 'Business goal captured with confidence' })
+        setTimeout(() => setNotice(null), 1800)
+      }
+    } catch (error) {
+      setMessages((prev) => [...prev, { role: 'ai', text: 'The assistant is unavailable right now. Please try again in a moment.' }])
+      console.error(error)
+    } finally {
+      setIsLoading(false)
+    }
   }
 
-  const updateField = (section, key, value) => {
+  const updateField = (section: UpdateSection, key: string, value: string) => {
     setProjectData((prev) => ({
       ...prev,
-      [section]: { ...prev[section], [key]: value },
+      [section]: {
+        ...(prev[section] as Record<string, string>),
+        [key]: value,
+      },
     }))
+  }
+
+  const handleReviewAction = (action: string) => {
+    if (action.startsWith('Edit')) {
+      setActivePage('interview')
+      setNotice({ title: action, detail: 'Opened the interview workspace for editing.' })
+      setTimeout(() => setNotice(null), 1800)
+      return
+    }
+
+    setNotice({ title: action, detail: 'Prepared for export and review.' })
+    setTimeout(() => setNotice(null), 1800)
   }
 
   const renderDashboard = () => (
@@ -206,30 +304,41 @@ function App() {
             Project Name
             <input
               value={projectData.project.name}
-              onChange={(event) => updateField('project', 'name', event.target.value)}
+              placeholder="Enter project name"
+              onChange={(event: ChangeEvent<HTMLInputElement>) => updateField('project', 'name', event.target.value)}
             />
           </label>
           <label>
             Department
             <input
               value={projectData.project.department}
-              onChange={(event) => updateField('project', 'department', event.target.value)}
+              placeholder="Enter department"
+              onChange={(event: ChangeEvent<HTMLInputElement>) => updateField('project', 'department', event.target.value)}
             />
           </label>
           <label>
             Business Unit
-            <input value="Retail Ops" readOnly />
+            <input
+              value={projectData.project.business_unit}
+              placeholder="Enter business unit"
+              onChange={(event: ChangeEvent<HTMLInputElement>) => updateField('project', 'business_unit', event.target.value)}
+            />
           </label>
           <label>
             Project Sponsor
             <input
               value={projectData.project.sponsor}
-              onChange={(event) => updateField('project', 'sponsor', event.target.value)}
+              placeholder="Enter sponsor name"
+              onChange={(event: ChangeEvent<HTMLInputElement>) => updateField('project', 'sponsor', event.target.value)}
             />
           </label>
           <label>
             Expected Completion
-            <input value="2026-08-15" readOnly />
+            <input
+              value={projectData.project.expected_completion}
+              placeholder="YYYY-MM-DD"
+              onChange={(event: ChangeEvent<HTMLInputElement>) => updateField('project', 'expected_completion', event.target.value)}
+            />
           </label>
         </div>
         <div className="hero-actions">
@@ -289,11 +398,11 @@ function App() {
           <form className="composer" onSubmit={handleSend}>
             <input
               value={draftInput}
-              onChange={(event) => setDraftInput(event.target.value)}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => setDraftInput(event.target.value)}
               placeholder="Type your answer..."
             />
-            <button className="primary" type="submit">
-              Send
+            <button className="primary" type="submit" disabled={isLoading}>
+              {isLoading ? 'Sending…' : 'Send'}
             </button>
           </form>
         </section>
@@ -304,7 +413,7 @@ function App() {
             Project Overview
             <textarea
               value={projectData.overview.description}
-              onChange={(event) => updateField('overview', 'description', event.target.value)}
+              onChange={(event: ChangeEvent<HTMLTextAreaElement>) => updateField('overview', 'description', event.target.value)}
             />
           </label>
           <label>
@@ -315,7 +424,7 @@ function App() {
             Business Goals
             <textarea
               value={projectData.discovery.business_goals}
-              onChange={(event) => updateField('discovery', 'business_goals', event.target.value)}
+              onChange={(event: ChangeEvent<HTMLTextAreaElement>) => updateField('discovery', 'business_goals', event.target.value)}
             />
           </label>
         </section>
@@ -377,13 +486,27 @@ function App() {
           <span className="badge success">{completion}%</span>
         </div>
         <div className="review-actions">
-          <button className="secondary">Edit Overview</button>
-          <button className="secondary">Edit Discovery</button>
-          <button className="secondary">Edit Functional Requirements</button>
-          <button className="secondary">Edit Security</button>
-          <button className="primary">Generate DOCX</button>
-          <button className="secondary">Generate PDF</button>
-          <button className="secondary">Export JSON</button>
+          <button className="secondary" onClick={() => handleReviewAction('Edit Overview')}>
+            Edit Overview
+          </button>
+          <button className="secondary" onClick={() => handleReviewAction('Edit Discovery')}>
+            Edit Discovery
+          </button>
+          <button className="secondary" onClick={() => handleReviewAction('Edit Functional Requirements')}>
+            Edit Functional Requirements
+          </button>
+          <button className="secondary" onClick={() => handleReviewAction('Edit Security')}>
+            Edit Security
+          </button>
+          <button className="primary" onClick={() => handleReviewAction('Generate DOCX')}>
+            Generate DOCX
+          </button>
+          <button className="secondary" onClick={() => handleReviewAction('Generate PDF')}>
+            Generate PDF
+          </button>
+          <button className="secondary" onClick={() => handleReviewAction('Export JSON')}>
+            Export JSON
+          </button>
         </div>
         <div className="preview-card">
           <div className="preview-heading">
