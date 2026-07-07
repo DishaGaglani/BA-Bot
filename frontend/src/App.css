@@ -2,15 +2,28 @@
   min-height: 100vh;
   background: #f4f7fb;
   color: #10233f;
+  display: flex;
+  flex-direction: column;
 }
 
 .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 18px 24px;
+  padding: 10px 24px;
   background: white;
   border-bottom: 1px solid #dce5f0;
+  transition: all 0.2s ease-in-out;
+}
+
+.header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.header .eyebrow {
+  margin: 0 0 2px;
+  font-size: 0.65rem;
 }
 
 .eyebrow {
@@ -27,11 +40,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 12px;
+  padding: 6px 12px;
   border-radius: 999px;
   background: #e9f1ff;
   color: #3755d4;
   font-weight: 600;
+  font-size: 0.85rem;
 }
 
 .badge.success {
@@ -41,16 +55,56 @@
 
 .workspace {
   display: flex;
-  min-height: calc(100vh - 76px);
+  flex: 1;
 }
 
 .sidebar {
   width: 250px;
   background: #0f172a;
-  padding: 24px 16px;
+  padding: 20px 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.sidebar.collapsed {
+  width: 72px;
+  padding: 20px 8px;
+}
+
+.sidebar-toggle {
+  background: rgba(255, 255, 255, 0.08);
+  color: #dfe8f4;
+  border: none;
+  padding: 10px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s;
+}
+
+.sidebar-toggle:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: white;
+}
+
+.sidebar.collapsed .sidebar-toggle {
+  padding: 10px 0;
+  justify-content: center;
+  width: 100%;
+}
+
+.sidebar.collapsed .nav-item {
+  text-align: center;
+  padding: 12px 0;
 }
 
 .nav-item {
@@ -378,8 +432,23 @@ textarea {
   box-shadow: 0 16px 28px rgba(15,23,42,0.2);
 }
 
-.review-grid {
-  grid-template-columns: 1fr;
+.review-workspace-layout {
+  display: grid;
+  grid-template-columns: 2.2fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.review-status-column {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+@media (max-width: 1080px) {
+  .review-workspace-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 .preview-card {
@@ -446,4 +515,23 @@ textarea {
   .main-content {
     padding: 16px;
   }
+}
+
+.collapsed-initials {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #dfe8f4;
+  font-size: 0.8rem;
+  font-weight: 700;
+  transition: all 0.2s;
+}
+
+.nav-item.active .collapsed-initials {
+  background: rgba(255, 255, 255, 0.25);
+  color: white;
 }

@@ -71,12 +71,12 @@ const initialMessages: Message[] = [
   { role: 'ai', text: 'Hello. Tell me about your project and the business problem you want to solve.' },
 ]
 
-const navItems: Array<{ id: PageView; label: string }> = [
-  { id: 'dashboard', label: 'Dashboard' },
-  { id: 'new-project', label: 'New Project' },
-  { id: 'interview', label: 'Interview Workspace' },
-  { id: 'review', label: 'Review' },
-  { id: 'export', label: 'Export' },
+const navItems: Array<{ id: PageView; label: string; code: string }> = [
+  { id: 'dashboard', label: 'Dashboard', code: 'DB' },
+  { id: 'new-project', label: 'New Project', code: 'NP' },
+  { id: 'interview', label: 'Interview Workspace', code: 'IW' },
+  { id: 'review', label: 'Review', code: 'RV' },
+  { id: 'export', label: 'Export', code: 'EX' },
 ]
 
 function App() {
@@ -86,6 +86,7 @@ function App() {
   const [draftInput, setDraftInput] = useState<string>('')
   const [notice, setNotice] = useState<Notice | null>(null)
   const [isLoading, setIsLoading] = useState<boolean>(false)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false)
 
   useEffect(() => {
     const syncProjectData = async () => {
@@ -213,28 +214,6 @@ function App() {
         </div>
       </section>
 
-      <section className="page">
-        <div className="section-heading">
-          <h2>New Project</h2>
-          <button className="link" onClick={() => setActivePage('new-project')}>
-            Open
-          </button>
-        </div>
-        <div className="card-grid">
-          <article className="mini-card">
-            <h3>Project Name</h3>
-            <p>{projectData.project.name}</p>
-          </article>
-          <article className="mini-card">
-            <h3>Department</h3>
-            <p>{projectData.project.department}</p>
-          </article>
-          <article className="mini-card">
-            <h3>Sponsor</h3>
-            <p>{projectData.project.sponsor}</p>
-          </article>
-        </div>
-      </section>
 
       <section className="page">
         <div className="section-heading">
@@ -362,22 +341,10 @@ function App() {
         </button>
       </div>
 
-      <div className="workspace-grid">
-        <section className="panel">
-          <h3>Progress</h3>
-          <ul className="progress-list">
-            {progressItems.map((step) => (
-              <li key={step.label} className={step.complete ? 'done' : ''}>
-                <span>{step.complete ? '✓' : '○'}</span>
-                {step.label}
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        <section className="panel chat-panel">
+      <div className="workspace-grid" style={{ gridTemplateColumns: '1fr' }}>
+        <section className="panel chat-panel" style={{ gridColumn: 'span 1' }}>
           <h3>Chat</h3>
-          <div className="message-list">
+          <div className="message-list" style={{ minHeight: '450px', maxHeight: '60vh', overflowY: 'auto' }}>
             {messages.map((message, index) => (
               <div key={`${message.role}-${index}`} className={`message ${message.role}`}>
                 <strong>{message.role === 'ai' ? 'AI' : 'Customer'}</strong>
@@ -406,36 +373,105 @@ function App() {
             </button>
           </form>
         </section>
+      </div>
 
+      {notice && (
+        <div className="toast">
+          <strong>{notice.title}</strong>
+          <p>{notice.detail}</p>
+        </div>
+      )}
+    </div>
+  )
+
+  const renderReview = () => (
+    <div className="review-workspace-layout">
+      <div className="review-main-column">
+        <section className="page review-card">
+          <div className="section-heading">
+            <h2>Requirement Discovery Complete</h2>
+            <span className="badge success">{completion}%</span>
+          </div>
+          <div className="review-actions">
+            <button className="secondary" onClick={() => handleReviewAction('Edit Overview')}>
+              Edit Overview
+            </button>
+            <button className="secondary" onClick={() => handleReviewAction('Edit Discovery')}>
+              Edit Discovery
+            </button>
+            <button className="secondary" onClick={() => handleReviewAction('Edit Functional Requirements')}>
+              Edit Functional Requirements
+            </button>
+            <button className="secondary" onClick={() => handleReviewAction('Edit Security')}>
+              Edit Security
+            </button>
+            <button className="primary" onClick={() => handleReviewAction('Generate DOCX')}>
+              Generate DOCX
+            </button>
+            <button className="secondary" onClick={() => handleReviewAction('Generate PDF')}>
+              Generate PDF
+            </button>
+          </div>
+          <div className="preview-card">
+            <div className="preview-heading">
+              <h3>Document Preview</h3>
+              <span className="badge">HTML preview</span>
+            </div>
+            <div className="preview-pages">
+              <div className="preview-page">
+                <h4>Requirement Discovery Form</h4>
+                <p>{projectData.project.name || <em style={{ color: '#aaa' }}>No project name</em>}</p>
+                <p>{projectData.overview.description || <em style={{ color: '#aaa' }}>No description</em>}</p>
+              </div>
+              <div className="preview-page">
+                <h4>Page 2</h4>
+                <p>{projectData.discovery.business_problem || <em style={{ color: '#aaa' }}>No business problem</em>}</p>
+                <p>{projectData.discovery.business_goals || <em style={{ color: '#aaa' }}>No business goals</em>}</p>
+              </div>
+              <div className="preview-page">
+                <h4>Page 3</h4>
+                <p>
+                  Requirements:{' '}
+                  {projectData.functional_requirements.length > 0 ? (
+                    projectData.functional_requirements.map((item) => item.title).join(', ')
+                  ) : (
+                    <em style={{ color: '#aaa' }}>No requirements captured</em>
+                  )}
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div className="review-status-column">
         <section className="panel">
-          <h3>Live FDF</h3>
-          <label>
-            Project Overview
-            <textarea
-              value={projectData.overview.description}
-              onChange={(event: ChangeEvent<HTMLTextAreaElement>) => updateField('overview', 'description', event.target.value)}
-            />
-          </label>
-          <label>
-            Stakeholders
-            <input value={projectData.overview.stakeholders.join(', ')} readOnly />
-          </label>
-          <label>
-            Business Goals
-            <textarea
-              value={projectData.discovery.business_goals}
-              onChange={(event: ChangeEvent<HTMLTextAreaElement>) => updateField('discovery', 'business_goals', event.target.value)}
-            />
-          </label>
+          <h3>Requirement Cards</h3>
+          {projectData.functional_requirements.length > 0 ? (
+            projectData.functional_requirements.map((item) => (
+              <div key={item.title} className="requirement-card">
+                <strong>{item.title}</strong>
+                <p>Priority: {item.priority}</p>
+                <p>Confidence: {(item.confidence * 100).toFixed(0)}%</p>
+                <p>Source: Conversation 18</p>
+              </div>
+            ))
+          ) : (
+            <p className="muted" style={{ fontStyle: 'italic', fontSize: '0.9rem' }}>No requirements extracted yet.</p>
+          )}
         </section>
 
         <section className="panel">
           <h3>Missing Fields</h3>
-          <ul className="missing-list">
-            {projectData.missing_fields.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
+          {projectData.missing_fields.length > 0 ? (
+            <ul className="missing-list">
+              {projectData.missing_fields.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted" style={{ fontStyle: 'italic', fontSize: '0.9rem', color: '#0f7b45' }}>✓ All fields complete!</p>
+          )}
         </section>
 
         <section className="panel">
@@ -455,114 +491,84 @@ function App() {
             </div>
           </div>
         </section>
-
-        <section className="panel">
-          <h3>Requirement Cards</h3>
-          {projectData.functional_requirements.map((item) => (
-            <div key={item.title} className="requirement-card">
-              <strong>{item.title}</strong>
-              <p>Priority: {item.priority}</p>
-              <p>Confidence: {(item.confidence * 100).toFixed(0)}%</p>
-              <p>Source: Conversation 18</p>
-            </div>
-          ))}
-        </section>
       </div>
-
-      {notice && (
-        <div className="toast">
-          <strong>{notice.title}</strong>
-          <p>{notice.detail}</p>
-        </div>
-      )}
-    </div>
-  )
-
-  const renderReview = () => (
-    <div className="page-grid review-grid">
-      <section className="page review-card">
-        <div className="section-heading">
-          <h2>Requirement Discovery Complete</h2>
-          <span className="badge success">{completion}%</span>
-        </div>
-        <div className="review-actions">
-          <button className="secondary" onClick={() => handleReviewAction('Edit Overview')}>
-            Edit Overview
-          </button>
-          <button className="secondary" onClick={() => handleReviewAction('Edit Discovery')}>
-            Edit Discovery
-          </button>
-          <button className="secondary" onClick={() => handleReviewAction('Edit Functional Requirements')}>
-            Edit Functional Requirements
-          </button>
-          <button className="secondary" onClick={() => handleReviewAction('Edit Security')}>
-            Edit Security
-          </button>
-          <button className="primary" onClick={() => handleReviewAction('Generate DOCX')}>
-            Generate DOCX
-          </button>
-          <button className="secondary" onClick={() => handleReviewAction('Generate PDF')}>
-            Generate PDF
-          </button>
-          <button className="secondary" onClick={() => handleReviewAction('Export JSON')}>
-            Export JSON
-          </button>
-        </div>
-        <div className="preview-card">
-          <div className="preview-heading">
-            <h3>Document Preview</h3>
-            <span className="badge">HTML preview</span>
-          </div>
-          <div className="preview-pages">
-            <div className="preview-page">
-              <h4>Requirement Discovery Form</h4>
-              <p>{projectData.project.name}</p>
-              <p>{projectData.overview.description}</p>
-            </div>
-            <div className="preview-page">
-              <h4>Page 2</h4>
-              <p>{projectData.discovery.business_problem}</p>
-              <p>{projectData.discovery.business_goals}</p>
-            </div>
-            <div className="preview-page">
-              <h4>Page 3</h4>
-              <p>Requirements: {projectData.functional_requirements.map((item) => item.title).join(', ')}</p>
-            </div>
-          </div>
-        </div>
-      </section>
     </div>
   )
 
   const renderExport = () => (
     <div className="page centered-page">
       <section className="page export-card">
-        <h2>Export Ready</h2>
-        <p className="muted">The frontend consumes structured backend data and presents it as a polished document.</p>
-        <pre>{JSON.stringify(projectData, null, 2)}</pre>
+        <h2>Export Project Requirements</h2>
+        <p className="muted" style={{ marginBottom: '24px' }}>
+          Select your preferred document format to download and share the compiled discovery results.
+        </p>
+        
+        <div className="export-options-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
+          <div className="export-option-card" style={{ border: '1px solid #e7ebf2', padding: '24px', borderRadius: '16px', backgroundColor: '#fcfdff', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', height: '36px' }}>
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#3755d4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+            </span>
+            <h3 style={{ margin: '0' }}>Microsoft Word Document</h3>
+            <p className="muted" style={{ fontSize: '0.9rem', margin: '0', flex: 1 }}>
+              Download the fully structured discovery report as an editable Word Document (.docx) formatted with standard headings and layout.
+            </p>
+            <button className="primary" onClick={() => handleReviewAction('Generate DOCX')} style={{ width: '100%', marginTop: '12px' }}>
+              Export as Word (.docx)
+            </button>
+          </div>
+
+          <div className="export-option-card" style={{ border: '1px solid #e7ebf2', padding: '24px', borderRadius: '16px', backgroundColor: '#fcfdff', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', height: '36px' }}>
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#e11d48" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M9 15h1a1.5 1.5 0 0 0 0-3H9v4z"></path><path d="M12 12v4"></path><path d="M12 12a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2"></path></svg>
+            </span>
+            <h3 style={{ margin: '0' }}>Adobe PDF Document</h3>
+            <p className="muted" style={{ fontSize: '0.9rem', margin: '0', flex: 1 }}>
+              Generate a print-ready, read-only PDF document (.pdf) containing all extracted functional requirements, timeline details, and business outcomes.
+            </p>
+            <button className="primary" onClick={() => handleReviewAction('Generate PDF')} style={{ width: '100%', marginTop: '12px' }}>
+              Export as PDF (.pdf)
+            </button>
+          </div>
+        </div>
       </section>
     </div>
   )
 
   return (
     <div className="app-shell">
-      <header className="header">
-        <div>
-          <p className="eyebrow">BA Agent</p>
-          <h2>Business Analyst AI</h2>
-        </div>
-        <div className="profile-pill">Profile</div>
-      </header>
+      {activePage !== 'interview' && (
+        <header className="header">
+          <div>
+            <p className="eyebrow">BA Agent</p>
+            <h2>Business Analyst AI</h2>
+          </div>
+          <div className="profile-pill">Profile</div>
+        </header>
+      )}
 
       <div className="workspace">
-        <aside className="sidebar">
+        <aside className={`sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`}>
+          <button
+            className="sidebar-toggle"
+            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            title={isSidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+          >
+            <span>{isSidebarCollapsed ? '▶' : '◀'}</span>
+            {!isSidebarCollapsed && <span>Collapse</span>}
+          </button>
           {navItems.map((item) => (
             <button
               key={item.id}
               className={`nav-item ${activePage === item.id ? 'active' : ''}`}
               onClick={() => setActivePage(item.id)}
+              title={item.label}
+              style={{ display: 'flex', alignItems: 'center', gap: isSidebarCollapsed ? '0' : '12px' }}
             >
-              {item.label}
+              {isSidebarCollapsed ? (
+                <span className="collapsed-initials">{item.code}</span>
+              ) : (
+                <span>{item.label}</span>
+              )}
             </button>
           ))}
         </aside>
