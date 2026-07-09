@@ -1,7 +1,14 @@
 import json
-import ssl
-import urllib.error
-import urllib.request
+import io
+import re
+import requests
+import urllib3
+
+import docx
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER
 
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +18,9 @@ from sqlalchemy.orm import Session
 
 from database import engine, SessionLocal
 import models
+
+# Disable SSL Warnings for self-signed certificates or proxy contexts
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Create database tables
 models.Base.metadata.create_all(bind=engine)
@@ -42,6 +52,7 @@ class MessageRequest(BaseModel):
 class PredictionRequest(BaseModel):
     question: str
     sessionId: str | None = None
+    projectId: int | None = None
 
 
 class MessageResponse(BaseModel):
@@ -50,12 +61,146 @@ class MessageResponse(BaseModel):
 
 
 class ProjectPayload(BaseModel):
+    id: int | None = None
+    sessionId: str | None = None
+    messages: list[dict[str, object]] | None = None
     project: dict[str, str]
     overview: dict[str, object]
     discovery: dict[str, object]
     functional_requirements: list[dict[str, object]]
     missing_fields: list[str]
     next_question: str
+
+
+def parse_markdown_to_docx(markdown_text: str) -> io.BytesIO:
+    doc = docx.Document()
+    
+    # Split text into lines
+    lines = markdown_text.split("\n")
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        
+        # Clean inline markdown markers for Word
+        clean_line = re.sub(r'\*\*(.*?)\*\*', r'\1', stripped)
+        clean_line = re.sub(r'\*(.*?)\*', r'\1', clean_line)
+        clean_line = re.sub(r'_(.*?)_', r'\1', clean_line)
+        clean_line = re.sub(r'`(.*?)`', r'\1', clean_line)
+
+        # Headings
+        if stripped.startswith("# "):
+            doc.add_heading(clean_line[2:], level=1)
+        elif stripped.startswith("## "):
+            doc.add_heading(clean_line[3:], level=2)
+        elif stripped.startswith("### "):
+            doc.add_heading(clean_line[4:], level=3)
+        elif stripped.startswith("#### "):
+            doc.add_heading(clean_line[5:], level=4)
+        # Bullet list
+        elif stripped.startswith("* ") or stripped.startswith("- "):
+            doc.add_paragraph(clean_line[2:], style='List Bullet')
+        # Numbered list
+        elif stripped.split(".")[0].isdigit() and len(stripped.split(".")) > 1:
+            parts = clean_line.split(".", 1)
+            doc.add_paragraph(parts[1].strip(), style='List Number')
+        # Regular paragraph
+        else:
+            doc.add_paragraph(clean_line)
+            
+    file_stream = io.BytesIO()
+    doc.save(file_stream)
+    file_stream.seek(0)
+    return file_stream
+
+
+def parse_markdown_to_pdf(markdown_text: str) -> io.BytesIO:
+    file_stream = io.BytesIO()
+    doc = SimpleDocTemplate(file_stream, pagesize=letter, rightMargin=54, leftMargin=54, topMargin=54, bottomMargin=54)
+    story = []
+    
+    styles = getSampleStyleSheet()
+    
+    # Custom styles to prevent duplication and add nice spacing
+    title_style = ParagraphStyle(
+        'DocTitle',
+        parent=styles['Heading1'],
+        fontSize=22,
+        leading=26,
+        spaceAfter=12,
+        alignment=TA_CENTER
+    )
+    h2_style = ParagraphStyle(
+        'DocH2',
+        parent=styles['Heading2'],
+        fontSize=15,
+        leading=18,
+        spaceBefore=14,
+        spaceAfter=6
+    )
+    h3_style = ParagraphStyle(
+        'DocH3',
+        parent=styles['Heading3'],
+        fontSize=11,
+        leading=14,
+        spaceBefore=10,
+        spaceAfter=4
+    )
+    body_style = ParagraphStyle(
+        'DocBody',
+        parent=styles['BodyText'],
+        fontSize=9.5,
+        leading=13,
+        spaceAfter=6
+    )
+    bullet_style = ParagraphStyle(
+        'DocBullet',
+        parent=styles['Normal'],
+        leftIndent=20,
+        firstLineIndent=-10,
+        fontSize=9.5,
+        leading=13,
+        spaceAfter=4
+    )
+
+    lines = markdown_text.split("\n")
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        
+        # Parse text content (simple sanitization for reportlab tags)
+        clean_text = stripped.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        
+        # Clean markdown formatting (*bold*, _italic_, etc.)
+        clean_text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', clean_text)
+        clean_text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', clean_text)
+        clean_text = re.sub(r'_(.*?)_', r'<i>\1</i>', clean_text)
+        clean_text = re.sub(r'`(.*?)`', r'<font face="Courier">\1</font>', clean_text)
+        
+        if stripped.startswith("# "):
+            story.append(Paragraph(clean_text[2:], title_style))
+            story.append(Spacer(1, 10))
+        elif stripped.startswith("## "):
+            story.append(Paragraph(clean_text[3:], h2_style))
+            story.append(Spacer(1, 6))
+        elif stripped.startswith("### "):
+            story.append(Paragraph(clean_text[4:], h3_style))
+            story.append(Spacer(1, 4))
+        elif stripped.startswith("* ") or stripped.startswith("- "):
+            story.append(Paragraph(f"&bull; {clean_text[2:]}", bullet_style))
+        elif stripped.split(".")[0].isdigit() and len(stripped.split(".")) > 1:
+            parts = clean_text.split(".", 1)
+            num = parts[0].strip()
+            text = parts[1].strip()
+            story.append(Paragraph(f"{num}. {text}", bullet_style))
+        else:
+            story.append(Paragraph(clean_text, body_style))
+            story.append(Spacer(1, 4))
+            
+    doc.build(story)
+    file_stream.seek(0)
+    return file_stream
 
 
 @app.get("/api/health")
@@ -71,45 +216,155 @@ def receive_message(payload: MessageRequest) -> MessageResponse:
     )
 
 
-@app.get("/api/project")
-def get_project(db: Session = Depends(get_db)) -> dict[str, object] | None:
-    db_project = db.query(models.Project).first()
-    if db_project:
-        return json.loads(db_project.data)
-    return None
+@app.get("/api/projects")
+def list_projects(db: Session = Depends(get_db)):
+    db_projects = db.query(models.Project).all()
+    result = []
+    for p in db_projects:
+        try:
+            proj_data = json.loads(p.data)
+            proj_data["id"] = p.id
+            result.append(proj_data)
+        except Exception:
+            pass
+    return result
+
+
+@app.get("/api/project/{project_id}")
+def get_project(project_id: int, db: Session = Depends(get_db)):
+    db_project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        proj_data = json.loads(db_project.data)
+        proj_data["id"] = db_project.id
+        return proj_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error parsing project data: {str(e)}")
 
 
 @app.post("/api/project")
-def save_project(payload: ProjectPayload, db: Session = Depends(get_db)) -> dict[str, object]:
-    db_project = db.query(models.Project).first()
+def create_project(payload: ProjectPayload, db: Session = Depends(get_db)):
     project_data_json = json.dumps(payload.model_dump())
-    if db_project:
-        db_project.data = project_data_json
-    else:
-        db_project = models.Project(data=project_data_json)
-        db.add(db_project)
+    db_project = models.Project(data=project_data_json)
+    db.add(db_project)
     db.commit()
-    return {"status": "saved", "data": payload.model_dump()}
+    db.refresh(db_project)
+    try:
+        proj_data = json.loads(db_project.data)
+        proj_data["id"] = db_project.id
+        return proj_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error parsing created project: {str(e)}")
+
+
+@app.put("/api/project/{project_id}")
+def update_project(project_id: int, payload: ProjectPayload, db: Session = Depends(get_db)):
+    db_project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    payload.id = project_id
+    db_project.data = json.dumps(payload.model_dump())
+    db.commit()
+    try:
+        proj_data = json.loads(db_project.data)
+        proj_data["id"] = db_project.id
+        return proj_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error parsing updated project: {str(e)}")
+
+
+@app.delete("/api/project/{project_id}")
+def delete_project(project_id: int, db: Session = Depends(get_db)):
+    db_project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    db.delete(db_project)
+    db.commit()
+    return {"status": "deleted"}
+
+
+@app.get("/api/project/{project_id}/export")
+def export_project(project_id: int, format: str, db: Session = Depends(get_db)):
+    db_project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    try:
+        project_data = json.loads(db_project.data)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Malformed project record")
+        
+    session_id = project_data.get("sessionId")
+    project_info = project_data.get("project", {})
+    project_name = project_info.get("name") if project_info else None
+    if not project_name:
+        project_name = f"Project_{project_id}"
+    
+    prompt = (
+        f"The requirements interview discovery workshop is complete for project '{project_name}'. "
+        "Please generate and compile the final, detailed, and polished Requirements Discovery Document (FDR) "
+        "containing all project information, overview, stakeholders, business problem, business goals, and functional requirements. "
+        "Format the output using clear Markdown headings, bullet points, and numbered lists."
+    )
+    
+    payload = {
+        "question": prompt,
+        "streaming": False
+    }
+    if session_id:
+        payload["overrideConfig"] = {"sessionId": session_id}
+        
+    try:
+        response = requests.post(PREDICTION_URL, json=payload, timeout=60, verify=False)
+        response.raise_for_status()
+        res_data = response.json()
+        document_text = res_data.get("text", "")
+        if not document_text:
+            raise HTTPException(status_code=500, detail="Prediction service returned empty compiled text")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to generate compiled document from Forjinn flow: {str(e)}")
+        
+    if format.lower() == "docx":
+        file_stream = parse_markdown_to_docx(document_text)
+        filename = f"{project_name.replace(' ', '_')}_Requirements.docx"
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif format.lower() == "pdf":
+        file_stream = parse_markdown_to_pdf(document_text)
+        filename = f"{project_name.replace(' ', '_')}_Requirements.pdf"
+        media_type = "application/pdf"
+    else:
+        raise HTTPException(status_code=400, detail="Invalid format. Supported: docx, pdf")
+        
+    return StreamingResponse(
+        file_stream,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
+    )
 
 
 @app.post("/api/predict")
 def predict(payload: PredictionRequest, db: Session = Depends(get_db)) -> StreamingResponse:
-    db_project = db.query(models.Project).first()
     context_prefix = ""
-    if db_project:
-        try:
-            project_data = json.loads(db_project.data)
-            proj_info = project_data.get("project", {})
-            if proj_info and proj_info.get("name"):
-                context_prefix = (
-                    f"[Project Context - Name: {proj_info.get('name')}, "
-                    f"Department: {proj_info.get('department')}, "
-                    f"Sponsor: {proj_info.get('sponsor')}, "
-                    f"Business Unit: {proj_info.get('business_unit')}, "
-                    f"Expected Completion: {proj_info.get('expected_completion')}]\n"
-                )
-        except Exception:
-            pass
+    if payload.projectId:
+        db_project = db.query(models.Project).filter(models.Project.id == payload.projectId).first()
+        if db_project:
+            try:
+                project_data = json.loads(db_project.data)
+                proj_info = project_data.get("project", {})
+                if proj_info and proj_info.get("name"):
+                    context_prefix = (
+                        f"[Project Context - Name: {proj_info.get('name')}, "
+                        f"Department: {proj_info.get('department')}, "
+                        f"Sponsor: {proj_info.get('sponsor')}, "
+                        f"Business Unit: {proj_info.get('business_unit')}, "
+                        f"Expected Completion: {proj_info.get('expected_completion')}]\n"
+                    )
+            except Exception:
+                pass
 
     question = payload.question
     if not payload.sessionId and context_prefix:
@@ -118,35 +373,16 @@ def predict(payload: PredictionRequest, db: Session = Depends(get_db)) -> Stream
     payload_dict = {"question": question, "streaming": True}
     if payload.sessionId:
         payload_dict["overrideConfig"] = {"sessionId": payload.sessionId}
-    body = json.dumps(payload_dict).encode("utf-8")
-    
-    request = urllib.request.Request(
-        PREDICTION_URL,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
 
     def event_generator():
         try:
-            try:
-                response = urllib.request.urlopen(request, timeout=30)
-            except urllib.error.URLError as exc:
-                try:
-                    context = ssl._create_unverified_context()
-                    response = urllib.request.urlopen(request, context=context, timeout=30)
-                except Exception:
-                    raise exc
-
-            with response:
-                for line in response:
+            response = requests.post(PREDICTION_URL, json=payload_dict, stream=True, timeout=30, verify=False)
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if line:
                     line_str = line.decode("utf-8", "ignore").strip()
                     if line_str.startswith("data:"):
                         yield f"{line_str}\n\n"
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", "ignore")
-            err_data = json.dumps({"event": "error", "message": "Prediction service error", "details": detail})
-            yield f"data: {err_data}\n\n"
         except Exception as exc:
             err_data = json.dumps({"event": "error", "message": str(exc)})
             yield f"data: {err_data}\n\n"
