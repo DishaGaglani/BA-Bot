@@ -1,4 +1,6 @@
-import { useEffect, useState, type FormEvent, type ChangeEvent } from 'react'
+import { useEffect, useState, useRef, type FormEvent, type ChangeEvent } from 'react'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
 import './App.css'
 
 type PageView = 'dashboard' | 'new-project' | 'interview' | 'review' | 'export'
@@ -79,6 +81,124 @@ const navItems: Array<{ id: PageView; label: string; code: string }> = [
   { id: 'export', label: 'Export', code: 'EX' },
 ]
 
+function parseInlineMarkdown(text: string): React.ReactNode {
+  const inlineRegex = /(\*\*.*?\*\*|`.*?`)/g;
+  const parts = text.split(inlineRegex);
+  
+  return parts.map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return (
+        <code
+          key={index}
+          style={{
+            backgroundColor: '#f0f2f5',
+            padding: '2px 4px',
+            borderRadius: '4px',
+            fontFamily: 'monospace',
+          }}
+        >
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    return part;
+  });
+}
+
+function parseMarkdown(text: string): React.ReactNode {
+  const lines = text.split('\n');
+  return lines.map((line, lineIndex) => {
+    if (line.startsWith('### ')) {
+      return <h4 key={lineIndex}>{parseInlineMarkdown(line.slice(4))}</h4>;
+    }
+    if (line.startsWith('## ')) {
+      return <h3 key={lineIndex}>{parseInlineMarkdown(line.slice(3))}</h3>;
+    }
+    if (line.startsWith('# ')) {
+      return <h2 key={lineIndex}>{parseInlineMarkdown(line.slice(2))}</h2>;
+    }
+
+    const bulletMatch = line.match(/^(\s*)[-*+]\s+(.*)/);
+    if (bulletMatch) {
+      return (
+        <div key={lineIndex} style={{ margin: '4px 0 4px 20px', display: 'flex', gap: '8px' }}>
+          <span style={{ userSelect: 'none' }}>•</span>
+          <span>{parseInlineMarkdown(bulletMatch[2])}</span>
+        </div>
+      );
+    }
+    
+    const numMatch = line.match(/^(\s*)(\d+)\.\s+(.*)/);
+    if (numMatch) {
+      return (
+        <div key={lineIndex} style={{ margin: '4px 0 4px 20px', display: 'flex', gap: '8px' }}>
+          <span style={{ userSelect: 'none' }}>{numMatch[2]}.</span>
+          <span>{parseInlineMarkdown(numMatch[3])}</span>
+        </div>
+      );
+    }
+
+    if (line.trim() === '') {
+      return <div key={lineIndex} style={{ height: '0.8em' }} />;
+    }
+
+    return (
+      <span key={lineIndex} style={{ display: 'block', margin: '4px 0' }}>
+        {parseInlineMarkdown(line)}
+      </span>
+    );
+  });
+}
+
+function parseContent(text: string): React.ReactNode {
+  const mathRegex = /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\$[^\$\n]+?\$|\\\([\s\S]*?\\\))/g;
+  const parts = text.split(mathRegex);
+  
+  return parts.map((part, index) => {
+    if (part.startsWith('$$') && part.endsWith('$$')) {
+      const math = part.slice(2, -2).trim();
+      try {
+        const html = katex.renderToString(math, { displayMode: true, throwOnError: false });
+        return <div key={index} dangerouslySetInnerHTML={{ __html: html }} className="katex-block" />;
+      } catch (e) {
+        return <code key={index}>{part}</code>;
+      }
+    }
+    if (part.startsWith('\\\[') && part.endsWith('\\\]')) {
+      const math = part.slice(2, -2).trim();
+      try {
+        const html = katex.renderToString(math, { displayMode: true, throwOnError: false });
+        return <div key={index} dangerouslySetInnerHTML={{ __html: html }} className="katex-block" />;
+      } catch (e) {
+        return <code key={index}>{part}</code>;
+      }
+    }
+    if (part.startsWith('$') && part.endsWith('$')) {
+      const math = part.slice(1, -1).trim();
+      try {
+        const html = katex.renderToString(math, { displayMode: false, throwOnError: false });
+        return <span key={index} dangerouslySetInnerHTML={{ __html: html }} className="katex-inline" />;
+      } catch (e) {
+        return <code key={index}>{part}</code>;
+      }
+    }
+    if (part.startsWith('\\(') && part.endsWith('\\)')) {
+      const math = part.slice(2, -2).trim();
+      try {
+        const html = katex.renderToString(math, { displayMode: false, throwOnError: false });
+        return <span key={index} dangerouslySetInnerHTML={{ __html: html }} className="katex-inline" />;
+      } catch (e) {
+        return <code key={index}>{part}</code>;
+      }
+    }
+    
+    return <span key={index}>{parseMarkdown(part)}</span>;
+  });
+}
+
 function App() {
   const [activePage, setActivePage] = useState<PageView>('dashboard')
   const [projectData, setProjectData] = useState<ProjectData>(initialProject)
@@ -87,8 +207,39 @@ function App() {
   const [notice, setNotice] = useState<Notice | null>(null)
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false)
+  const [sessionId, setSessionId] = useState<string | null>(() => localStorage.getItem('ba_bot_session_id'))
+  const [isLoaded, setIsLoaded] = useState<boolean>(false)
+
+  const messageListRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
+    if (messageListRef.current) {
+      messageListRef.current.scrollTop = messageListRef.current.scrollHeight
+    }
+  }, [messages])
+
+  useEffect(() => {
+    const loadProjectData = async () => {
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/project')
+        if (response.ok) {
+          const data = await response.json()
+          if (data) {
+            setProjectData(data)
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load project data', error)
+      } finally {
+        setIsLoaded(true)
+      }
+    }
+    void loadProjectData()
+  }, [])
+
+  useEffect(() => {
+    if (!isLoaded) return
+
     const syncProjectData = async () => {
       try {
         await fetch('http://127.0.0.1:8000/api/project', {
@@ -102,7 +253,7 @@ function App() {
     }
 
     void syncProjectData()
-  }, [projectData])
+  }, [projectData, isLoaded])
 
   const completion = Math.round(
     (Number(Boolean(projectData.project.name)) +
@@ -128,7 +279,11 @@ function App() {
     const incoming = draftInput.trim()
     if (!incoming) return
 
-    setMessages((prev) => [...prev, { role: 'user', text: incoming }])
+    setMessages((prev) => [
+      ...prev,
+      { role: 'user', text: incoming },
+      { role: 'ai', text: '' },
+    ])
     setDraftInput('')
     setIsLoading(true)
 
@@ -136,36 +291,99 @@ function App() {
       const response = await fetch('http://127.0.0.1:8000/api/predict', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: incoming }),
+        body: JSON.stringify({ question: incoming, sessionId: sessionId }),
       })
 
-      const payload = (await response.json()) as {
-        status?: string
-        data?: Record<string, unknown>
-        detail?: unknown
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`)
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('No readable response body')
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let fullReply = ''
+
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const parts = buffer.split('\n\n')
+        buffer = parts.pop() || ''
+
+        for (const part of parts) {
+          const lines = part.split('\n')
+          for (const line of lines) {
+            if (line.startsWith('data:')) {
+              const dataStr = line.slice(5).trim()
+              try {
+                const parsed = JSON.parse(dataStr) as {
+                  event?: string
+                  data?: unknown
+                  message?: string
+                  details?: string
+                }
+
+                if (parsed.event === 'token' && typeof parsed.data === 'string') {
+                  fullReply += parsed.data
+                  setMessages((prev) => {
+                    const updated = [...prev]
+                    if (updated.length > 0) {
+                      const last = updated[updated.length - 1]
+                      if (last.role === 'ai') {
+                        last.text = fullReply
+                      }
+                    }
+                    return updated
+                  })
+                } else if (parsed.event === 'nextAgentFlow' && (parsed.data as { status?: string })?.status === 'INPROGRESS') {
+                  fullReply = ''
+                } else if (parsed.event === 'metadata' && parsed.data) {
+                  const meta = parsed.data as { sessionId?: string }
+                  if (meta.sessionId) {
+                    setSessionId(meta.sessionId)
+                    localStorage.setItem('ba_bot_session_id', meta.sessionId)
+                  }
+                } else if (parsed.event === 'error') {
+                  const errMsg = parsed.message || 'Stream error occurred'
+                  console.error(errMsg, parsed.details)
+                  setMessages((prev) => {
+                    const updated = [...prev]
+                    if (updated.length > 0) {
+                      const last = updated[updated.length - 1]
+                      if (last.role === 'ai') {
+                        last.text = last.text ? `${last.text}\n[Error: ${errMsg}]` : `Error: ${errMsg}`
+                      }
+                    }
+                    return updated
+                  })
+                }
+              } catch (e) {
+                console.error('Failed to parse SSE payload:', dataStr, e)
+              }
+            }
+          }
+        }
       }
 
       const lower = incoming.toLowerCase()
-      const replyText = typeof payload?.data?.text === 'string'
-        ? payload.data.text
-        : typeof payload?.data?.reply === 'string'
-          ? payload.data.reply
-          : typeof payload?.data?.message === 'string'
-            ? payload.data.message
-            : typeof payload?.data?.output === 'object' && payload.data.output !== null && 'content' in payload.data.output
-              ? String((payload.data.output as { content?: unknown }).content ?? '')
-              : typeof payload?.detail === 'string'
-                ? payload.detail
-                : 'I have captured that input and I will keep advancing the discovery flow.'
-
-      setMessages((prev) => [...prev, { role: 'ai', text: replyText }])
-
       if (lower.includes('kpi') || lower.includes('requirement')) {
         setNotice({ title: 'Requirement Added', detail: 'Business goal captured with confidence' })
         setTimeout(() => setNotice(null), 1800)
       }
     } catch (error) {
-      setMessages((prev) => [...prev, { role: 'ai', text: 'The assistant is unavailable right now. Please try again in a moment.' }])
+      setMessages((prev) => {
+        const updated = [...prev]
+        if (updated.length > 0 && updated[updated.length - 1].role === 'ai' && !updated[updated.length - 1].text) {
+          updated[updated.length - 1].text = 'The assistant is unavailable right now. Please try again in a moment.'
+          return updated
+        }
+        return [...prev, { role: 'ai', text: 'The assistant is unavailable right now. Please try again in a moment.' }]
+      })
       console.error(error)
     } finally {
       setIsLoading(false)
@@ -180,6 +398,13 @@ function App() {
         [key]: value,
       },
     }))
+  }
+
+  const handleStartNewInterview = () => {
+    setSessionId(null)
+    localStorage.removeItem('ba_bot_session_id')
+    setMessages(initialMessages)
+    setActivePage('interview')
   }
 
   const handleReviewAction = (action: string) => {
@@ -321,7 +546,7 @@ function App() {
           </label>
         </div>
         <div className="hero-actions">
-          <button className="primary" onClick={() => setActivePage('interview')}>
+          <button className="primary" onClick={handleStartNewInterview}>
             Start Interview
           </button>
         </div>
@@ -344,11 +569,11 @@ function App() {
       <div className="workspace-grid" style={{ gridTemplateColumns: '1fr' }}>
         <section className="panel chat-panel" style={{ gridColumn: 'span 1' }}>
           <h3>Chat</h3>
-          <div className="message-list" style={{ minHeight: '450px', maxHeight: '60vh', overflowY: 'auto' }}>
+          <div className="message-list" ref={messageListRef} style={{ minHeight: '450px', maxHeight: '60vh', overflowY: 'auto' }}>
             {messages.map((message, index) => (
               <div key={`${message.role}-${index}`} className={`message ${message.role}`}>
                 <strong>{message.role === 'ai' ? 'AI' : 'Customer'}</strong>
-                <p>{message.text}</p>
+                <div>{parseContent(message.text)}</div>
               </div>
             ))}
           </div>
