@@ -42,7 +42,7 @@ def get_db():
     finally:
         db.close()
 
-PREDICTION_URL = "https://forjinn.com/api/v1/prediction/b40934a1-9758-4ce7-b938-781a4f74723a"
+PREDICTION_URL = "https://forjinn.com/api/v1/prediction/249fc96e-5b62-4208-8787-0d77367e9eaf"
 
 
 class MessageRequest(BaseModel):
@@ -63,6 +63,7 @@ class MessageResponse(BaseModel):
 class ProjectPayload(BaseModel):
     id: int | None = None
     sessionId: str | None = None
+    pdfGenerated: bool | None = False
     messages: list[dict[str, object]] | None = None
     project: dict[str, str]
     overview: dict[str, object]
@@ -220,13 +221,21 @@ def receive_message(payload: MessageRequest) -> MessageResponse:
 def list_projects(db: Session = Depends(get_db)):
     db_projects = db.query(models.Project).all()
     result = []
+    updated = False
     for p in db_projects:
         try:
             proj_data = json.loads(p.data)
+            if not proj_data.get("sessionId"):
+                import uuid
+                proj_data["sessionId"] = f"session-{uuid.uuid4()}"
+                p.data = json.dumps(proj_data)
+                updated = True
             proj_data["id"] = p.id
             result.append(proj_data)
         except Exception:
             pass
+    if updated:
+        db.commit()
     return result
 
 
@@ -237,6 +246,11 @@ def get_project(project_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Project not found")
     try:
         proj_data = json.loads(db_project.data)
+        if not proj_data.get("sessionId"):
+            import uuid
+            proj_data["sessionId"] = f"session-{uuid.uuid4()}"
+            db_project.data = json.dumps(proj_data)
+            db.commit()
         proj_data["id"] = db_project.id
         return proj_data
     except Exception as e:
@@ -245,6 +259,9 @@ def get_project(project_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/project")
 def create_project(payload: ProjectPayload, db: Session = Depends(get_db)):
+    if not payload.sessionId:
+        import uuid
+        payload.sessionId = f"session-{uuid.uuid4()}"
     project_data_json = json.dumps(payload.model_dump())
     db_project = models.Project(data=project_data_json)
     db.add(db_project)
@@ -255,7 +272,7 @@ def create_project(payload: ProjectPayload, db: Session = Depends(get_db)):
         proj_data["id"] = db_project.id
         return proj_data
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error parsing created project: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Error parsing created project: {str(e)}")
 
 
 @app.put("/api/project/{project_id}")
@@ -263,6 +280,20 @@ def update_project(project_id: int, payload: ProjectPayload, db: Session = Depen
     db_project = db.query(models.Project).filter(models.Project.id == project_id).first()
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Preserve existing sessionId if update payload lacks one
+    try:
+        existing_data = json.loads(db_project.data)
+        existing_session_id = existing_data.get("sessionId")
+        if existing_session_id and not payload.sessionId:
+            payload.sessionId = existing_session_id
+    except Exception:
+        pass
+
+    if not payload.sessionId:
+        import uuid
+        payload.sessionId = f"session-{uuid.uuid4()}"
+
     payload.id = project_id
     db_project.data = json.dumps(payload.model_dump())
     db.commit()
@@ -308,18 +339,30 @@ def export_project(project_id: int, format: str, db: Session = Depends(get_db)):
         "Format the output using clear Markdown headings, bullet points, and numbered lists."
     )
     
+    chat_id = session_id or (f"project-{project_id}" if project_id else None)
     payload = {
         "question": prompt,
         "streaming": False
     }
-    if session_id:
-        payload["overrideConfig"] = {"sessionId": session_id}
+    if chat_id:
+        payload["chatId"] = chat_id
+        payload["overrideConfig"] = {"sessionId": chat_id}
         
     try:
-        response = requests.post(PREDICTION_URL, json=payload, timeout=60, verify=False)
+        response = requests.post(PREDICTION_URL, json=payload, timeout=180, verify=False)
         response.raise_for_status()
         res_data = response.json()
-        document_text = res_data.get("text", "")
+        
+        document_text = res_data.get("text")
+        if not document_text:
+            output_obj = res_data.get("output")
+            if isinstance(output_obj, dict):
+                document_text = output_obj.get("content", "")
+            elif isinstance(output_obj, str):
+                document_text = output_obj
+            else:
+                document_text = ""
+                
         if not document_text:
             raise HTTPException(status_code=500, detail="Prediction service returned empty compiled text")
     except Exception as e:
@@ -349,11 +392,18 @@ def export_project(project_id: int, format: str, db: Session = Depends(get_db)):
 @app.post("/api/predict")
 def predict(payload: PredictionRequest, db: Session = Depends(get_db)) -> StreamingResponse:
     context_prefix = ""
+    is_first_message = True
     if payload.projectId:
         db_project = db.query(models.Project).filter(models.Project.id == payload.projectId).first()
         if db_project:
             try:
                 project_data = json.loads(db_project.data)
+                
+                messages = project_data.get("messages", [])
+                user_msgs = [m for m in messages if m.get("role") == "user"]
+                if len(user_msgs) > 0:
+                    is_first_message = False
+                    
                 proj_info = project_data.get("project", {})
                 if proj_info and proj_info.get("name"):
                     context_prefix = (
@@ -367,16 +417,20 @@ def predict(payload: PredictionRequest, db: Session = Depends(get_db)) -> Stream
                 pass
 
     question = payload.question
-    if not payload.sessionId and context_prefix:
+    if is_first_message and context_prefix:
         question = f"{context_prefix}User query: {payload.question}"
 
     payload_dict = {"question": question, "streaming": True}
-    if payload.sessionId:
-        payload_dict["overrideConfig"] = {"sessionId": payload.sessionId}
+    
+    # Use sessionId or fallback to a project-specific identifier for native Forjinn memory
+    chat_id = payload.sessionId or (f"project-{payload.projectId}" if payload.projectId else None)
+    if chat_id:
+        payload_dict["chatId"] = chat_id
+        payload_dict["overrideConfig"] = {"sessionId": chat_id}
 
     def event_generator():
         try:
-            response = requests.post(PREDICTION_URL, json=payload_dict, stream=True, timeout=30, verify=False)
+            response = requests.post(PREDICTION_URL, json=payload_dict, stream=True, timeout=90, verify=False)
             response.raise_for_status()
             for line in response.iter_lines():
                 if line:

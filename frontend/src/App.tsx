@@ -16,6 +16,7 @@ interface Requirement {
 interface ProjectData {
   id?: number
   sessionId?: string | null
+  pdfGenerated?: boolean
   messages?: Message[]
   project: {
     name: string
@@ -56,6 +57,7 @@ const initialMessages: Message[] = [
 const initialProject: ProjectData = {
   id: undefined,
   sessionId: null,
+  pdfGenerated: false,
   messages: initialMessages,
   project: {
     name: '',
@@ -79,6 +81,121 @@ const initialProject: ProjectData = {
   next_question: '',
 }
 
+const sanitizeProjectData = (data: any): ProjectData => {
+  return {
+    id: data?.id,
+    sessionId: data?.sessionId || null,
+    pdfGenerated: data?.pdfGenerated || false,
+    messages: data?.messages || initialMessages,
+    project: {
+      name: data?.project?.name || '',
+      department: data?.project?.department || '',
+      sponsor: data?.project?.sponsor || '',
+      business_unit: data?.project?.business_unit || '',
+      expected_completion: data?.project?.expected_completion || '',
+    },
+    overview: {
+      description: data?.overview?.description || '',
+      stakeholders: data?.overview?.stakeholders || [],
+    },
+    discovery: {
+      business_problem: data?.discovery?.business_problem || '',
+      business_goals: data?.discovery?.business_goals || '',
+      desired_outcomes: data?.discovery?.desired_outcomes || '',
+      constraints: data?.discovery?.constraints || '',
+    },
+    functional_requirements: data?.functional_requirements || [],
+    missing_fields: data?.missing_fields || [],
+    next_question: data?.next_question || '',
+  }
+}
+
+function extractFieldsFromChat(messages: Message[]): Partial<ProjectData> | null {
+  const summaryMsg = [...messages].reverse().find(
+    (m) => m.role === 'ai' && m.text.includes('Requirement Discovery Summary')
+  );
+  
+  const updates: any = {
+    project: {},
+    overview: {},
+    discovery: {},
+    functional_requirements: []
+  };
+
+  let foundAny = false;
+
+  if (summaryMsg) {
+    const text = summaryMsg.text;
+    
+    // Extract Description
+    const descMatch = text.match(/^\s*[-*+]\s*\*\*(?:Description|Project Overview|Overview):\*\*\s*(.*)$/im) || 
+                      text.match(/\*\*(?:Description|Project Overview|Overview):\*\*\s*(.*)/i);
+    if (descMatch) {
+      updates.overview.description = descMatch[1].trim();
+      foundAny = true;
+    }
+    
+    // Extract Business Problem
+    const problemMatch = text.match(/^\s*[-*+]\s*\*\*(?:Business Problem|Problem):\*\*\s*(.*)$/im) || 
+                         text.match(/\*\*(?:Business Problem|Problem):\*\*\s*(.*)/i);
+    if (problemMatch) {
+      updates.discovery.business_problem = problemMatch[1].trim();
+      foundAny = true;
+    }
+    
+    // Extract Business Goals
+    const goalsMatch = text.match(/^\s*[-*+]\s*\*\*(?:Business Goals|Goals):\*\*\s*(.*)$/im) || 
+                       text.match(/\*\*(?:Business Goals|Goals):\*\*\s*(.*)/i);
+    if (goalsMatch) {
+      updates.discovery.business_goals = goalsMatch[1].trim();
+      foundAny = true;
+    }
+    
+    // Extract Constraints
+    const constraintsMatch = text.match(/^\s*[-*+]\s*\*\*(?:Constraints|NFR|Non-Functional Requirements):\*\*\s*(.*)$/im) || 
+                             text.match(/\*\*(?:Constraints|NFR|Non-Functional Requirements):\*\*\s*(.*)/i);
+    if (constraintsMatch) {
+      updates.discovery.constraints = constraintsMatch[1].trim();
+      foundAny = true;
+    }
+
+    // Extract Desired Outcomes
+    const outcomesMatch = text.match(/^\s*[-*+]\s*\*\*(?:Desired Outcomes|Outcomes):\*\*\s*(.*)$/im) || 
+                          text.match(/\*\*(?:Desired Outcomes|Outcomes):\*\*\s*(.*)/i);
+    if (outcomesMatch) {
+      updates.discovery.desired_outcomes = outcomesMatch[1].trim();
+      foundAny = true;
+    }
+    
+    // Extract Functional Requirements Features list
+    const funcMatch = text.match(/^\s*[-*+]\s*\*\*(?:Features|Functional Requirements|Requirements):\*\*\s*(.*)$/im) ||
+                      text.match(/\*\*(?:Features|Functional Requirements|Requirements):\*\*\s*(.*)/i);
+    if (funcMatch) {
+      const listStr = funcMatch[1].trim();
+      const items = listStr.split(/,|\*|-/).map(s => s.trim()).filter(Boolean);
+      if (items.length > 0) {
+        updates.functional_requirements = items.map((title) => ({
+          title,
+          priority: 'High',
+          confidence: 1.0
+        }));
+        foundAny = true;
+      }
+    }
+  }
+
+  // Check if any message contains a docx/pdf download link
+  const hasDownloadLink = messages.some(
+    (m) => m.role === 'ai' && (m.text.includes('.docx') || m.text.includes('.pdf')) && m.text.includes('](')
+  );
+  if (hasDownloadLink) {
+    updates.pdfGenerated = true;
+    foundAny = true;
+  }
+  
+  return foundAny ? updates : null;
+}
+
 const navItems: Array<{ id: PageView; label: string; code: string }> = [
   { id: 'dashboard', label: 'Dashboard', code: 'DB' },
   { id: 'interview', label: 'Interview Workspace', code: 'IW' },
@@ -87,7 +204,7 @@ const navItems: Array<{ id: PageView; label: string; code: string }> = [
 ]
 
 function parseInlineMarkdown(text: string): React.ReactNode {
-  const inlineRegex = /(\*\*.*?\*\*|`.*?`)/g;
+  const inlineRegex = /(\*\*.*?\*\*|`.*?`|\[.*?\]\(.*?\))/g;
   const parts = text.split(inlineRegex);
   
   return parts.map((part, index) => {
@@ -108,6 +225,70 @@ function parseInlineMarkdown(text: string): React.ReactNode {
           {part.slice(1, -1)}
         </code>
       );
+    }
+    if (part.startsWith('[') && part.includes('](') && part.endsWith(')')) {
+      const match = part.match(/\[(.*?)\]\((.*?)\)/);
+      if (match) {
+        const label = match[1];
+        let url = match[2];
+        
+        if (url.includes('29fc96e-5b62-4208-8787-0d77367e9eaf')) {
+          url = url.replace('29fc96e-5b62-4208-8787-0d77367e9eaf', '249fc96e-5b62-4208-8787-0d77367e9eaf');
+        }
+        
+        if (label.endsWith('.docx') || url.includes('.docx')) {
+          return (
+            <a
+              key={index}
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="docx-export-link"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                backgroundColor: '#eff6ff',
+                border: '1px solid #bfdbfe',
+                color: '#1d4ed8',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                textDecoration: 'none',
+                fontWeight: '600',
+                fontSize: '0.9rem',
+                margin: '4px 0',
+                transition: 'all 0.2s',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+              }}
+              onMouseOver={(e) => {
+                e.currentTarget.style.backgroundColor = '#dbeafe';
+                e.currentTarget.style.borderColor = '#93c5fd';
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.backgroundColor = '#eff6ff';
+                e.currentTarget.style.borderColor = '#bfdbfe';
+              }}
+            >
+              📄 {label} (Download)
+            </a>
+          );
+        }
+        
+        return (
+          <a
+            key={index}
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              color: '#3755d4',
+              textDecoration: 'underline',
+            }}
+          >
+            {label}
+          </a>
+        );
+      }
     }
     return part;
   });
@@ -230,14 +411,16 @@ function App() {
     const hasDiscoveryProblem = proj.discovery?.business_problem;
     const hasDiscoveryGoals = proj.discovery?.business_goals;
     const hasFunctionalReqs = proj.functional_requirements && proj.functional_requirements.length > 0;
+    const hasPdf = proj.pdfGenerated;
     
     return Math.round(
       (Number(Boolean(hasProjectName)) +
         Number(Boolean(hasOverviewDesc)) +
         Number(Boolean(hasDiscoveryProblem)) +
         Number(Boolean(hasDiscoveryGoals)) +
-        Number(Boolean(hasFunctionalReqs))) /
-        5 *
+        Number(Boolean(hasFunctionalReqs)) +
+        Number(Boolean(hasPdf))) /
+        6 *
         100,
     )
   }
@@ -263,7 +446,7 @@ function App() {
         const proj = await response.json()
         setActiveProjectId(id)
         localStorage.setItem('ba_bot_active_project_id', id.toString())
-        setProjectData(proj)
+        setProjectData(sanitizeProjectData(proj))
         setActivePage('interview')
       }
     } catch (error) {
@@ -307,7 +490,7 @@ function App() {
       if (activeProjectId) {
         const found = list.find((p: ProjectData) => p.id === activeProjectId)
         if (found) {
-          setProjectData(found)
+          setProjectData(sanitizeProjectData(found))
         } else {
           setActiveProjectId(null)
           localStorage.removeItem('ba_bot_active_project_id')
@@ -343,23 +526,79 @@ function App() {
     return () => clearTimeout(timer)
   }, [projectData, activeProjectId, isLoaded])
 
+  useEffect(() => {
+    if (!projectData.messages || projectData.messages.length === 0) return;
+    
+    const extracted = extractFieldsFromChat(projectData.messages);
+    if (extracted) {
+      setProjectData((prev) => {
+        let changed = false;
+        const newOverview = { ...prev.overview };
+        const newDiscovery = { ...prev.discovery };
+        let newFuncReqs = prev.functional_requirements ? [...prev.functional_requirements] : [];
+        let newPdfGenerated = prev.pdfGenerated;
+
+        if (extracted.overview?.description && prev.overview?.description !== extracted.overview.description) {
+          newOverview.description = extracted.overview.description;
+          changed = true;
+        }
+        if (extracted.discovery?.business_problem && prev.discovery?.business_problem !== extracted.discovery.business_problem) {
+          newDiscovery.business_problem = extracted.discovery.business_problem;
+          changed = true;
+        }
+        if (extracted.discovery?.business_goals && prev.discovery?.business_goals !== extracted.discovery.business_goals) {
+          newDiscovery.business_goals = extracted.discovery.business_goals;
+          changed = true;
+        }
+        if (extracted.discovery?.constraints && prev.discovery?.constraints !== extracted.discovery.constraints) {
+          newDiscovery.constraints = extracted.discovery.constraints;
+          changed = true;
+        }
+        if (extracted.discovery?.desired_outcomes && prev.discovery?.desired_outcomes !== extracted.discovery.desired_outcomes) {
+          newDiscovery.desired_outcomes = extracted.discovery.desired_outcomes;
+          changed = true;
+        }
+        if (extracted.functional_requirements && extracted.functional_requirements.length > 0 && (!prev.functional_requirements || prev.functional_requirements.length === 0)) {
+          newFuncReqs = extracted.functional_requirements;
+          changed = true;
+        }
+        if (extracted.pdfGenerated && !prev.pdfGenerated) {
+          newPdfGenerated = true;
+          changed = true;
+        }
+
+        if (changed) {
+          return {
+            ...prev,
+            overview: newOverview,
+            discovery: newDiscovery,
+            functional_requirements: newFuncReqs,
+            pdfGenerated: newPdfGenerated,
+          };
+        }
+        return prev;
+      });
+    }
+  }, [projectData.messages])
+
   const completion = Math.round(
-    (Number(Boolean(projectData.project.name)) +
-      Number(Boolean(projectData.overview.description)) +
-      Number(Boolean(projectData.discovery.business_problem)) +
-      Number(Boolean(projectData.discovery.business_goals)) +
-      Number(projectData.functional_requirements.length > 0)) /
-      5 *
+    (Number(Boolean(projectData.project?.name)) +
+      Number(Boolean(projectData.overview?.description)) +
+      Number(Boolean(projectData.discovery?.business_problem)) +
+      Number(Boolean(projectData.discovery?.business_goals)) +
+      Number((projectData.functional_requirements?.length || 0) > 0) +
+      Number(Boolean(projectData.pdfGenerated))) /
+      6 *
       100,
   )
 
   const progressItems = [
-    { label: 'Overview', complete: Boolean(projectData.overview.description) },
-    { label: 'Discovery', complete: Boolean(projectData.discovery.business_problem) },
-    { label: 'Business', complete: Boolean(projectData.discovery.business_goals) },
-    { label: 'Functional', complete: projectData.functional_requirements.length > 0 },
-    { label: 'NFR', complete: Boolean(projectData.discovery.constraints) },
-    { label: 'Approval', complete: projectData.missing_fields.length < 2 },
+    { label: 'Overview', complete: Boolean(projectData.overview?.description) },
+    { label: 'Discovery', complete: Boolean(projectData.discovery?.business_problem) },
+    { label: 'Business', complete: Boolean(projectData.discovery?.business_goals) },
+    { label: 'Functional', complete: (projectData.functional_requirements?.length || 0) > 0 },
+    { label: 'NFR', complete: Boolean(projectData.discovery?.constraints) },
+    { label: 'Approval', complete: (projectData.missing_fields?.length || 0) < 2 },
   ]
 
   const handleSend = async (event: FormEvent<HTMLFormElement>) => {
@@ -437,11 +676,12 @@ function App() {
                 } else if (parsed.event === 'nextAgentFlow' && (parsed.data as { status?: string })?.status === 'INPROGRESS') {
                   fullReply = ''
                 } else if (parsed.event === 'metadata' && parsed.data) {
-                  const meta = parsed.data as { sessionId?: string }
-                  if (meta.sessionId) {
+                  const meta = parsed.data as { sessionId?: string; chatId?: string }
+                  const activeSessionId = meta.chatId || meta.sessionId
+                  if (activeSessionId) {
                     setProjectData((prev) => ({
                       ...prev,
-                      sessionId: meta.sessionId,
+                      sessionId: activeSessionId,
                     }))
                   }
                 } else if (parsed.event === 'error') {
@@ -523,7 +763,7 @@ function App() {
         
         setActiveProjectId(newId)
         localStorage.setItem('ba_bot_active_project_id', newId.toString())
-        setProjectData(createdProj)
+        setProjectData(sanitizeProjectData(createdProj))
         
         await loadProjects()
         setActivePage('interview')
@@ -600,6 +840,11 @@ function App() {
         a.click()
         document.body.removeChild(a)
         window.URL.revokeObjectURL(url)
+        
+        setProjectData((prev) => ({
+          ...prev,
+          pdfGenerated: true,
+        }))
         
         setNotice({ title: 'Export Success', detail: `Downloaded FDR ${format.toUpperCase()} successfully.` })
       } catch (error) {
@@ -770,7 +1015,7 @@ function App() {
           <label>
             Project Name
             <input
-              value={projectData.project.name}
+              value={projectData.project?.name || ''}
               placeholder="Enter project name"
               onChange={(event: ChangeEvent<HTMLInputElement>) => updateField('project', 'name', event.target.value)}
             />
@@ -778,7 +1023,7 @@ function App() {
           <label>
             Department
             <input
-              value={projectData.project.department}
+              value={projectData.project?.department || ''}
               placeholder="Enter department"
               onChange={(event: ChangeEvent<HTMLInputElement>) => updateField('project', 'department', event.target.value)}
             />
@@ -786,7 +1031,7 @@ function App() {
           <label>
             Business Unit
             <input
-              value={projectData.project.business_unit}
+              value={projectData.project?.business_unit || ''}
               placeholder="Enter business unit"
               onChange={(event: ChangeEvent<HTMLInputElement>) => updateField('project', 'business_unit', event.target.value)}
             />
@@ -794,7 +1039,7 @@ function App() {
           <label>
             Project Sponsor
             <input
-              value={projectData.project.sponsor}
+              value={projectData.project?.sponsor || ''}
               placeholder="Enter sponsor name"
               onChange={(event: ChangeEvent<HTMLInputElement>) => updateField('project', 'sponsor', event.target.value)}
             />
@@ -802,7 +1047,7 @@ function App() {
           <label>
             Expected Completion
             <input
-              value={projectData.project.expected_completion}
+              value={projectData.project?.expected_completion || ''}
               placeholder="YYYY-MM-DD"
               onChange={(event: ChangeEvent<HTMLInputElement>) => updateField('project', 'expected_completion', event.target.value)}
             />
