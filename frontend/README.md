@@ -1,16 +1,40 @@
-# React + Vite
+# BA-Bot Frontend (React + Vite)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This folder contains the single-page React frontend application for the BA-Bot requirements discovery workspace.
 
-Currently, two official plugins are available:
+## 💻 Tech Stack & Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+*   **React 19 & TypeScript**: Provides a robust, type-safe development environment.
+*   **Vite**: Extremely fast bundler and dev server.
+*   **KaTeX**: In-browser rendering of equations and mathematical syntax (`katex`).
+*   **Responsive Dashboard & Interview Workspace**: Smooth state transitions, markdown parsing, and inline download elements.
 
-## React Compiler
+## 🚀 Running Locally
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+1. Install npm packages:
+   ```bash
+   npm install
+   ```
 
-## Expanding the ESLint configuration
+2. Start the development server:
+   ```bash
+   npm run dev
+   ```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+3. Build the production build:
+   ```bash
+   npm run build
+   ```
+
+4. Preview the production build locally:
+   ```bash
+   npm run preview
+   ```
+
+## 📂 Key Code Structure
+
+*   [App.tsx](file:///Users/dishagaglani/Desktop/L&T%20PES/BA_BOT/ba-agent/frontend/src/App.tsx): Contains the main routing, application state, and views (Dashboard, Interview, Review, Export).
+*   [App.css](file:///Users/dishagaglani/Desktop/L&T%20PES/BA_BOT/ba-agent/frontend/src/App.css): Stores layout styles, color palettes, animations, and typography rules.
+*   [index.css](file:///Users/dishagaglani/Desktop/L&T%20PES/BA_BOT/ba-agent/frontend/src/index.css): Sets base HTML/body variables, typography fonts, and utility classes.
+
+For complete project details and setup instructions, refer to the [Root README](../README.md).
