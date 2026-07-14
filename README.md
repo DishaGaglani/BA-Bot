@@ -250,13 +250,4 @@ cd backend && uvicorn app:app --reload --host 0.0.0.0 --port 8000
 
 ---
 
-## 🏢 Built For
 
-**L&T PES (Larsen & Toubro — Precision Engineering & Systems)**
-Built as an internal productivity tool to accelerate requirements engineering workflows.
-
----
-
-<div align="center">
-  <sub>Built with ❤️ using FastAPI · React · SQLite · Forjinn AI</sub>
-</div>
