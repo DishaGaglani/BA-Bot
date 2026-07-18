@@ -1,29 +1,33 @@
 import json
-import io
-import re
 import requests
 import urllib3
-
-import docx
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER
-
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from database import engine, SessionLocal
-import models
+from utils.migrate import run_migration
+
+# Run database migrations and seed default data on startup
+run_migration()
+
+# Import route handlers
+import auth.routes
+import routes.projects
+import routes.admin
+from dependencies.auth import get_current_user, get_db
+from models import User, UserRole, Project, ProjectMember, ProjectMemberRole
+from services.audit import log_action
+from services.conversation_manager import save_message, get_active_messages
+from services.summary_manager import check_and_summarize
+from services.gap_analyzer import analyze_gaps
+from services.project_state_manager import get_structured_state, update_project_state, get_legacy_payload
+from services.prompt_builder import build_optimized_prompt, estimate_tokens
 
 # Disable SSL Warnings for self-signed certificates or proxy contexts
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# Create database tables
-models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="BA Bot API", version="1.0.0")
 
@@ -35,12 +39,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# Include routers
+app.include_router(auth.routes.router)
+app.include_router(routes.projects.router)
+app.include_router(routes.admin.router)
 
 PREDICTION_URL = "https://forjinn.com/api/v1/prediction/249fc96e-5b62-4208-8787-0d77367e9eaf"
 
@@ -60,150 +62,6 @@ class MessageResponse(BaseModel):
     reply: str
 
 
-class ProjectPayload(BaseModel):
-    id: int | None = None
-    sessionId: str | None = None
-    pdfGenerated: bool | None = False
-    messages: list[dict[str, object]] | None = None
-    project: dict[str, str]
-    overview: dict[str, object]
-    discovery: dict[str, object]
-    functional_requirements: list[dict[str, object]]
-    missing_fields: list[str]
-    next_question: str
-
-
-def parse_markdown_to_docx(markdown_text: str) -> io.BytesIO:
-    doc = docx.Document()
-    
-    # Split text into lines
-    lines = markdown_text.split("\n")
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            continue
-        
-        # Clean inline markdown markers for Word
-        clean_line = re.sub(r'\*\*(.*?)\*\*', r'\1', stripped)
-        clean_line = re.sub(r'\*(.*?)\*', r'\1', clean_line)
-        clean_line = re.sub(r'_(.*?)_', r'\1', clean_line)
-        clean_line = re.sub(r'`(.*?)`', r'\1', clean_line)
-
-        # Headings
-        if stripped.startswith("# "):
-            doc.add_heading(clean_line[2:], level=1)
-        elif stripped.startswith("## "):
-            doc.add_heading(clean_line[3:], level=2)
-        elif stripped.startswith("### "):
-            doc.add_heading(clean_line[4:], level=3)
-        elif stripped.startswith("#### "):
-            doc.add_heading(clean_line[5:], level=4)
-        # Bullet list
-        elif stripped.startswith("* ") or stripped.startswith("- "):
-            doc.add_paragraph(clean_line[2:], style='List Bullet')
-        # Numbered list
-        elif stripped.split(".")[0].isdigit() and len(stripped.split(".")) > 1:
-            parts = clean_line.split(".", 1)
-            doc.add_paragraph(parts[1].strip(), style='List Number')
-        # Regular paragraph
-        else:
-            doc.add_paragraph(clean_line)
-            
-    file_stream = io.BytesIO()
-    doc.save(file_stream)
-    file_stream.seek(0)
-    return file_stream
-
-
-def parse_markdown_to_pdf(markdown_text: str) -> io.BytesIO:
-    file_stream = io.BytesIO()
-    doc = SimpleDocTemplate(file_stream, pagesize=letter, rightMargin=54, leftMargin=54, topMargin=54, bottomMargin=54)
-    story = []
-    
-    styles = getSampleStyleSheet()
-    
-    # Custom styles to prevent duplication and add nice spacing
-    title_style = ParagraphStyle(
-        'DocTitle',
-        parent=styles['Heading1'],
-        fontSize=22,
-        leading=26,
-        spaceAfter=12,
-        alignment=TA_CENTER
-    )
-    h2_style = ParagraphStyle(
-        'DocH2',
-        parent=styles['Heading2'],
-        fontSize=15,
-        leading=18,
-        spaceBefore=14,
-        spaceAfter=6
-    )
-    h3_style = ParagraphStyle(
-        'DocH3',
-        parent=styles['Heading3'],
-        fontSize=11,
-        leading=14,
-        spaceBefore=10,
-        spaceAfter=4
-    )
-    body_style = ParagraphStyle(
-        'DocBody',
-        parent=styles['BodyText'],
-        fontSize=9.5,
-        leading=13,
-        spaceAfter=6
-    )
-    bullet_style = ParagraphStyle(
-        'DocBullet',
-        parent=styles['Normal'],
-        leftIndent=20,
-        firstLineIndent=-10,
-        fontSize=9.5,
-        leading=13,
-        spaceAfter=4
-    )
-
-    lines = markdown_text.split("\n")
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            continue
-        
-        # Parse text content (simple sanitization for reportlab tags)
-        clean_text = stripped.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        
-        # Clean markdown formatting (*bold*, _italic_, etc.)
-        clean_text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', clean_text)
-        clean_text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', clean_text)
-        clean_text = re.sub(r'_(.*?)_', r'<i>\1</i>', clean_text)
-        clean_text = re.sub(r'`(.*?)`', r'<font face="Courier">\1</font>', clean_text)
-        
-        if stripped.startswith("# "):
-            story.append(Paragraph(clean_text[2:], title_style))
-            story.append(Spacer(1, 10))
-        elif stripped.startswith("## "):
-            story.append(Paragraph(clean_text[3:], h2_style))
-            story.append(Spacer(1, 6))
-        elif stripped.startswith("### "):
-            story.append(Paragraph(clean_text[4:], h3_style))
-            story.append(Spacer(1, 4))
-        elif stripped.startswith("* ") or stripped.startswith("- "):
-            story.append(Paragraph(f"&bull; {clean_text[2:]}", bullet_style))
-        elif stripped.split(".")[0].isdigit() and len(stripped.split(".")) > 1:
-            parts = clean_text.split(".", 1)
-            num = parts[0].strip()
-            text = parts[1].strip()
-            story.append(Paragraph(f"{num}. {text}", bullet_style))
-        else:
-            story.append(Paragraph(clean_text, body_style))
-            story.append(Spacer(1, 4))
-            
-    doc.build(story)
-    file_stream.seek(0)
-    return file_stream
-
-
 @app.get("/api/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
@@ -217,218 +75,142 @@ def receive_message(payload: MessageRequest) -> MessageResponse:
     )
 
 
-@app.get("/api/projects")
-def list_projects(db: Session = Depends(get_db)):
-    db_projects = db.query(models.Project).all()
-    result = []
-    updated = False
-    for p in db_projects:
-        try:
-            proj_data = json.loads(p.data)
-            if not proj_data.get("sessionId"):
-                import uuid
-                proj_data["sessionId"] = f"session-{uuid.uuid4()}"
-                p.data = json.dumps(proj_data)
-                updated = True
-            proj_data["id"] = p.id
-            result.append(proj_data)
-        except Exception:
-            pass
-    if updated:
-        db.commit()
-    return result
-
-
-@app.get("/api/project/{project_id}")
-def get_project(project_id: int, db: Session = Depends(get_db)):
-    db_project = db.query(models.Project).filter(models.Project.id == project_id).first()
-    if not db_project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    try:
-        proj_data = json.loads(db_project.data)
-        if not proj_data.get("sessionId"):
-            import uuid
-            proj_data["sessionId"] = f"session-{uuid.uuid4()}"
-            db_project.data = json.dumps(proj_data)
-            db.commit()
-        proj_data["id"] = db_project.id
-        return proj_data
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error parsing project data: {str(e)}")
-
-
-@app.post("/api/project")
-def create_project(payload: ProjectPayload, db: Session = Depends(get_db)):
-    if not payload.sessionId:
-        import uuid
-        payload.sessionId = f"session-{uuid.uuid4()}"
-    project_data_json = json.dumps(payload.model_dump())
-    db_project = models.Project(data=project_data_json)
-    db.add(db_project)
-    db.commit()
-    db.refresh(db_project)
-    try:
-        proj_data = json.loads(db_project.data)
-        proj_data["id"] = db_project.id
-        return proj_data
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Error parsing created project: {str(e)}")
-
-
-@app.put("/api/project/{project_id}")
-def update_project(project_id: int, payload: ProjectPayload, db: Session = Depends(get_db)):
-    db_project = db.query(models.Project).filter(models.Project.id == project_id).first()
-    if not db_project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    
-    # Preserve existing sessionId if update payload lacks one
-    try:
-        existing_data = json.loads(db_project.data)
-        existing_session_id = existing_data.get("sessionId")
-        if existing_session_id and not payload.sessionId:
-            payload.sessionId = existing_session_id
-    except Exception:
-        pass
-
-    if not payload.sessionId:
-        import uuid
-        payload.sessionId = f"session-{uuid.uuid4()}"
-
-    payload.id = project_id
-    db_project.data = json.dumps(payload.model_dump())
-    db.commit()
-    try:
-        proj_data = json.loads(db_project.data)
-        proj_data["id"] = db_project.id
-        return proj_data
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error parsing updated project: {str(e)}")
-
-
-@app.delete("/api/project/{project_id}")
-def delete_project(project_id: int, db: Session = Depends(get_db)):
-    db_project = db.query(models.Project).filter(models.Project.id == project_id).first()
-    if not db_project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    db.delete(db_project)
-    db.commit()
-    return {"status": "deleted"}
-
-
-@app.get("/api/project/{project_id}/export")
-def export_project(project_id: int, format: str, db: Session = Depends(get_db)):
-    db_project = db.query(models.Project).filter(models.Project.id == project_id).first()
-    if not db_project:
-        raise HTTPException(status_code=404, detail="Project not found")
-        
-    try:
-        project_data = json.loads(db_project.data)
-    except Exception:
-        raise HTTPException(status_code=500, detail="Malformed project record")
-        
-    session_id = project_data.get("sessionId")
-    project_info = project_data.get("project", {})
-    project_name = project_info.get("name") if project_info else None
-    if not project_name:
-        project_name = f"Project_{project_id}"
-    
-    prompt = (
-        f"The requirements interview discovery workshop is complete for project '{project_name}'. "
-        "Please generate and compile the final, detailed, and polished Requirements Discovery Document (FDR) "
-        "containing all project information, overview, stakeholders, business problem, business goals, and functional requirements. "
-        "Format the output using clear Markdown headings, bullet points, and numbered lists."
-    )
-    
-    chat_id = session_id or (f"project-{project_id}" if project_id else None)
-    payload = {
-        "question": prompt,
-        "streaming": False
-    }
-    if chat_id:
-        payload["chatId"] = chat_id
-        payload["overrideConfig"] = {"sessionId": chat_id}
-        
-    try:
-        response = requests.post(PREDICTION_URL, json=payload, timeout=180, verify=False)
-        response.raise_for_status()
-        res_data = response.json()
-        
-        document_text = res_data.get("text")
-        if not document_text:
-            output_obj = res_data.get("output")
-            if isinstance(output_obj, dict):
-                document_text = output_obj.get("content", "")
-            elif isinstance(output_obj, str):
-                document_text = output_obj
-            else:
-                document_text = ""
-                
-        if not document_text:
-            raise HTTPException(status_code=500, detail="Prediction service returned empty compiled text")
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to generate compiled document from Forjinn flow: {str(e)}")
-        
-    if format.lower() == "docx":
-        file_stream = parse_markdown_to_docx(document_text)
-        filename = f"{project_name.replace(' ', '_')}_Requirements.docx"
-        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    elif format.lower() == "pdf":
-        file_stream = parse_markdown_to_pdf(document_text)
-        filename = f"{project_name.replace(' ', '_')}_Requirements.pdf"
-        media_type = "application/pdf"
-    else:
-        raise HTTPException(status_code=400, detail="Invalid format. Supported: docx, pdf")
-        
-    return StreamingResponse(
-        file_stream,
-        media_type=media_type,
-        headers={
-            "Content-Disposition": f"attachment; filename={filename}",
-            "Access-Control-Expose-Headers": "Content-Disposition"
-        }
-    )
-
-
 @app.post("/api/predict")
-def predict(payload: PredictionRequest, db: Session = Depends(get_db)) -> StreamingResponse:
-    context_prefix = ""
-    is_first_message = True
-    if payload.projectId:
-        db_project = db.query(models.Project).filter(models.Project.id == payload.projectId).first()
-        if db_project:
-            try:
-                project_data = json.loads(db_project.data)
-                
-                messages = project_data.get("messages", [])
-                user_msgs = [m for m in messages if m.get("role") == "user"]
-                if len(user_msgs) > 0:
-                    is_first_message = False
-                    
-                proj_info = project_data.get("project", {})
-                if proj_info and proj_info.get("name"):
-                    context_prefix = (
-                        f"[Project Context - Name: {proj_info.get('name')}, "
-                        f"Department: {proj_info.get('department')}, "
-                        f"Sponsor: {proj_info.get('sponsor')}, "
-                        f"Business Unit: {proj_info.get('business_unit')}, "
-                        f"Expected Completion: {proj_info.get('expected_completion')}]\n"
-                    )
-            except Exception:
-                pass
-
-    question = payload.question
-    if is_first_message and context_prefix:
-        question = f"{context_prefix}User query: {payload.question}"
-
-    payload_dict = {"question": question, "streaming": True}
+def predict(
+    payload: PredictionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> StreamingResponse:
+    # 1. Resolve and verify project access
+    project = None
     
-    # Use sessionId or fallback to a project-specific identifier for native Forjinn memory
-    chat_id = payload.sessionId or (f"project-{payload.projectId}" if payload.projectId else None)
-    if chat_id:
-        payload_dict["chatId"] = chat_id
-        payload_dict["overrideConfig"] = {"sessionId": chat_id}
+    if payload.projectId:
+        # Check by projectId
+        project = db.query(Project).options(joinedload(Project.messages)).filter(Project.id == payload.projectId).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+            
+        # Verify user has access to this project
+        if current_user.role != UserRole.ADMIN:
+            # Check owner
+            if project.owner_id != current_user.id:
+                # Check member
+                member = db.query(ProjectMember).filter(
+                    ProjectMember.project_id == project.id,
+                    ProjectMember.user_id == current_user.id
+                ).first()
+                if not member:
+                    log_action(
+                        db=db,
+                        user_id=current_user.id,
+                        action="permission denied",
+                        project_id=project.id,
+                        metadata={"reason": "User tried to chat on project they do not belong to"}
+                    )
+                    raise HTTPException(status_code=403, detail="You do not have access to this project's chat")
+                    
+        # Verify sessionId matches project sessionId
+        if payload.sessionId and project.session_id and payload.sessionId != project.session_id:
+            log_action(
+                db=db,
+                user_id=current_user.id,
+                action="permission denied",
+                project_id=project.id,
+                metadata={"reason": "Session ID mismatch for project chat request"}
+            )
+            raise HTTPException(status_code=403, detail="Session ID does not match this project")
+            
+    elif payload.sessionId:
+        # Check by sessionId
+        project = db.query(Project).options(joinedload(Project.messages)).filter(Project.session_id == payload.sessionId).first()
+        if not project:
+            raise HTTPException(status_code=403, detail="Invalid session reference")
+            
+        # Verify access
+        if current_user.role != UserRole.ADMIN:
+            if project.owner_id != current_user.id:
+                member = db.query(ProjectMember).filter(
+                    ProjectMember.project_id == project.id,
+                    ProjectMember.user_id == current_user.id
+                ).first()
+                if not member:
+                    log_action(
+                        db=db,
+                        user_id=current_user.id,
+                        action="permission denied",
+                        project_id=project.id,
+                        metadata={"reason": "User tried to chat on session they do not belong to"}
+                    )
+                    raise HTTPException(status_code=403, detail="Access denied")
+    else:
+        raise HTTPException(status_code=400, detail="Either projectId or sessionId is required")
+
+    # 2. Save user message to database
+    is_first_message = len(project.messages) == 0
+    save_message(db, project.id, "user", payload.question)
+    
+    # 3. Trigger rolling summarization (every 15 active messages)
+    check_and_summarize(db, project)
+    
+    # 4. Fetch optimized conversation history window
+    active_history = get_active_messages(db, project.id, limit=5)
+    
+    # 5. Deterministic gap analysis & section targeting
+    state = get_structured_state(project)
+    gaps = analyze_gaps(state)
+    
+    # 6. Build optimized prompt
+    optimized_prompt = build_optimized_prompt(
+        state=state,
+        gap_analysis=gaps,
+        summary=project.summary,
+        active_history=active_history,
+        current_query=payload.question
+    )
+    
+    # 7. Print size metrics
+    prompt_size = len(optimized_prompt)
+    summary_size = len(project.summary or "")
+    state_size = len(project.structured_state or "")
+    history_size = sum(len(m.text) for m in active_history)
+    est_tokens = estimate_tokens(optimized_prompt)
+    
+    print("================== PROMPT SIZE LOGGING ==================")
+    print(f"Project ID: {project.id}")
+    print(f"Target Section Focus: {gaps.get('current_section')}")
+    print(f"Input Token Estimate: ~{est_tokens}")
+    print(f"Full Prompt Size: {prompt_size} chars")
+    print(f"Conversation Summary Size: {summary_size} chars")
+    print(f"Structured Project State Size: {state_size} chars")
+    print(f"Active History Size: {history_size} chars")
+    print("=========================================================")
+
+    # 8. Log conversation started if first message
+    if is_first_message:
+        log_action(
+            db=db,
+            user_id=current_user.id,
+            action="conversation started",
+            project_id=project.id,
+            metadata={"session_id": project.session_id}
+        )
+
+    # 9. Define prediction payload maintaining the session's chat ID
+    payload_dict = {
+        "question": optimized_prompt,
+        "streaming": True
+    }
+    if project.session_id:
+        payload_dict["chatId"] = project.session_id
+        payload_dict["overrideConfig"] = {"sessionId": project.session_id}
+
+    project_id = project.id
+    question = payload.question
 
     def event_generator():
+        from database import SessionLocal
+        bg_db = SessionLocal()
+        ai_chunks = []
         try:
             response = requests.post(PREDICTION_URL, json=payload_dict, stream=True, timeout=90, verify=False)
             response.raise_for_status()
@@ -437,9 +219,34 @@ def predict(payload: PredictionRequest, db: Session = Depends(get_db)) -> Stream
                     line_str = line.decode("utf-8", "ignore").strip()
                     if line_str.startswith("data:"):
                         yield f"{line_str}\n\n"
+                        try:
+                            data_content = line_str[5:].strip()
+                            chunk_data = json.loads(data_content)
+                            if chunk_data.get("event") == "token":
+                                token_val = chunk_data.get("data")
+                                if isinstance(token_val, str):
+                                    ai_chunks.append(token_val)
+                        except Exception:
+                            pass
+            
+            # Post-chat completion processing using the dedicated background session
+            ai_reply = "".join(ai_chunks).strip()
+            if ai_reply:
+                bg_project = bg_db.query(Project).options(joinedload(Project.messages)).filter(Project.id == project_id).first()
+                if bg_project:
+                    save_message(bg_db, bg_project.id, "ai", ai_reply)
+                    update_project_state(bg_db, bg_project, question, ai_reply)
+                    legacy_payload = get_legacy_payload(bg_project)
+                    bg_project.data = json.dumps(legacy_payload)
+                    bg_db.commit()
+                    print(f"State updates completed successfully for project {bg_project.id}.")
+                
         except Exception as exc:
+            print(f"Error inside event_generator: {str(exc)}")
             err_data = json.dumps({"event": "error", "message": str(exc)})
             yield f"data: {err_data}\n\n"
+        finally:
+            bg_db.close()
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

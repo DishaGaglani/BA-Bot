@@ -3,9 +3,29 @@ import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import './App.css'
 
-type PageView = 'dashboard' | 'new-project' | 'interview' | 'review' | 'export'
+type PageView = 'dashboard' | 'new-project' | 'interview' | 'review' | 'export' | 'admin'
 type MessageRole = 'ai' | 'user'
 type UpdateSection = 'project' | 'overview' | 'discovery'
+
+// User Roles
+type UserRole = 'ADMIN' | 'BUSINESS_ANALYST' | 'REVIEWER' | 'CLIENT'
+// Project Member Roles
+type ProjectMemberRole = 'OWNER' | 'EDITOR' | 'VIEWER'
+
+interface User {
+  id: number
+  name: string
+  email: string
+  role: UserRole
+}
+
+interface ProjectMember {
+  id: number
+  user_id: number
+  name: string
+  email: string
+  role: ProjectMemberRole
+}
 
 interface Requirement {
   title: string
@@ -15,6 +35,8 @@ interface Requirement {
 
 interface ProjectData {
   id?: number
+  owner_id?: number
+  status?: string // 'DRAFT' | 'IN_REVIEW' | 'APPROVED' | 'REJECTED'
   sessionId?: string | null
   pdfGenerated?: boolean
   messages?: Message[]
@@ -56,6 +78,8 @@ const initialMessages: Message[] = [
 
 const initialProject: ProjectData = {
   id: undefined,
+  owner_id: undefined,
+  status: 'DRAFT',
   sessionId: null,
   pdfGenerated: false,
   messages: initialMessages,
@@ -84,6 +108,8 @@ const initialProject: ProjectData = {
 const sanitizeProjectData = (data: any): ProjectData => {
   return {
     id: data?.id,
+    owner_id: data?.owner_id,
+    status: data?.status || 'DRAFT',
     sessionId: data?.sessionId || null,
     pdfGenerated: data?.pdfGenerated || false,
     messages: data?.messages || initialMessages,
@@ -121,13 +147,12 @@ function extractFieldsFromChat(messages: Message[]): Partial<ProjectData> | null
     discovery: {},
     functional_requirements: []
   };
-
+  
   let foundAny = false;
-
+  
   if (summaryMsg) {
     const text = summaryMsg.text;
     
-    // Extract Description
     const descMatch = text.match(/^\s*[-*+]\s*\*\*(?:Description|Project Overview|Overview):\*\*\s*(.*)$/im) || 
                       text.match(/\*\*(?:Description|Project Overview|Overview):\*\*\s*(.*)/i);
     if (descMatch) {
@@ -135,7 +160,6 @@ function extractFieldsFromChat(messages: Message[]): Partial<ProjectData> | null
       foundAny = true;
     }
     
-    // Extract Business Problem
     const problemMatch = text.match(/^\s*[-*+]\s*\*\*(?:Business Problem|Problem):\*\*\s*(.*)$/im) || 
                          text.match(/\*\*(?:Business Problem|Problem):\*\*\s*(.*)/i);
     if (problemMatch) {
@@ -143,7 +167,6 @@ function extractFieldsFromChat(messages: Message[]): Partial<ProjectData> | null
       foundAny = true;
     }
     
-    // Extract Business Goals
     const goalsMatch = text.match(/^\s*[-*+]\s*\*\*(?:Business Goals|Goals):\*\*\s*(.*)$/im) || 
                        text.match(/\*\*(?:Business Goals|Goals):\*\*\s*(.*)/i);
     if (goalsMatch) {
@@ -151,7 +174,6 @@ function extractFieldsFromChat(messages: Message[]): Partial<ProjectData> | null
       foundAny = true;
     }
     
-    // Extract Constraints
     const constraintsMatch = text.match(/^\s*[-*+]\s*\*\*(?:Constraints|NFR|Non-Functional Requirements):\*\*\s*(.*)$/im) || 
                              text.match(/\*\*(?:Constraints|NFR|Non-Functional Requirements):\*\*\s*(.*)/i);
     if (constraintsMatch) {
@@ -159,7 +181,6 @@ function extractFieldsFromChat(messages: Message[]): Partial<ProjectData> | null
       foundAny = true;
     }
 
-    // Extract Desired Outcomes
     const outcomesMatch = text.match(/^\s*[-*+]\s*\*\*(?:Desired Outcomes|Outcomes):\*\*\s*(.*)$/im) || 
                           text.match(/\*\*(?:Desired Outcomes|Outcomes):\*\*\s*(.*)/i);
     if (outcomesMatch) {
@@ -167,7 +188,6 @@ function extractFieldsFromChat(messages: Message[]): Partial<ProjectData> | null
       foundAny = true;
     }
     
-    // Extract Functional Requirements Features list
     const funcMatch = text.match(/^\s*[-*+]\s*\*\*(?:Features|Functional Requirements|Requirements):\*\*\s*(.*)$/im) ||
                       text.match(/\*\*(?:Features|Functional Requirements|Requirements):\*\*\s*(.*)/i);
     if (funcMatch) {
@@ -184,7 +204,6 @@ function extractFieldsFromChat(messages: Message[]): Partial<ProjectData> | null
     }
   }
 
-  // Check if any message contains a docx/pdf download link
   const hasDownloadLink = messages.some(
     (m) => m.role === 'ai' && (m.text.includes('.docx') || m.text.includes('.pdf')) && m.text.includes('](')
   );
@@ -195,13 +214,6 @@ function extractFieldsFromChat(messages: Message[]): Partial<ProjectData> | null
   
   return foundAny ? updates : null;
 }
-
-const navItems: Array<{ id: PageView; label: string; code: string }> = [
-  { id: 'dashboard', label: 'Dashboard', code: 'DB' },
-  { id: 'interview', label: 'Interview Workspace', code: 'IW' },
-  { id: 'review', label: 'Review', code: 'RV' },
-  { id: 'export', label: 'Export', code: 'EX' },
-]
 
 function parseInlineMarkdown(text: string): React.ReactNode {
   const inlineRegex = /(\*\*.*?\*\*|`.*?`|\[.*?\]\(.*?\))/g;
@@ -234,44 +246,6 @@ function parseInlineMarkdown(text: string): React.ReactNode {
         
         if (url.includes('29fc96e-5b62-4208-8787-0d77367e9eaf')) {
           url = url.replace('29fc96e-5b62-4208-8787-0d77367e9eaf', '249fc96e-5b62-4208-8787-0d77367e9eaf');
-        }
-        
-        if (label.endsWith('.docx') || url.includes('.docx')) {
-          return (
-            <a
-              key={index}
-              href={url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="docx-export-link"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '8px',
-                backgroundColor: '#eff6ff',
-                border: '1px solid #bfdbfe',
-                color: '#1d4ed8',
-                padding: '6px 12px',
-                borderRadius: '8px',
-                textDecoration: 'none',
-                fontWeight: '600',
-                fontSize: '0.9rem',
-                margin: '4px 0',
-                transition: 'all 0.2s',
-                boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-              }}
-              onMouseOver={(e) => {
-                e.currentTarget.style.backgroundColor = '#dbeafe';
-                e.currentTarget.style.borderColor = '#93c5fd';
-              }}
-              onMouseOut={(e) => {
-                e.currentTarget.style.backgroundColor = '#eff6ff';
-                e.currentTarget.style.borderColor = '#bfdbfe';
-              }}
-            >
-              📄 {label} (Download)
-            </a>
-          );
         }
         
         return (
@@ -386,6 +360,19 @@ function parseContent(text: string): React.ReactNode {
 }
 
 function App() {
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('ba_bot_token'))
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
+  
+  // Auth Form State
+  const [authTab, setAuthTab] = useState<'login' | 'register'>('login')
+  const [loginEmail, setLoginEmail] = useState('')
+  const [loginPassword, setLoginPassword] = useState('')
+  const [regName, setRegName] = useState('')
+  const [regEmail, setRegEmail] = useState('')
+  const [regPassword, setRegPassword] = useState('')
+  const [regRole, setRegRole] = useState<UserRole>('BUSINESS_ANALYST')
+  const [authError, setAuthError] = useState('')
+
   const [activePage, setActivePage] = useState<PageView>('dashboard')
   const [projectData, setProjectData] = useState<ProjectData>(initialProject)
   const [draftInput, setDraftInput] = useState<string>('')
@@ -399,6 +386,23 @@ function App() {
     const saved = localStorage.getItem('ba_bot_active_project_id')
     return saved ? parseInt(saved, 10) : null
   })
+
+  // Project Members lists
+  const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteRole, setInviteRole] = useState<ProjectMemberRole>('EDITOR')
+  
+  // Feedback from Reviewer
+  const [reviewerFeedback, setReviewerFeedback] = useState('')
+
+  // Admin panel state
+  const [adminTab, setAdminTab] = useState<'users' | 'logs'>('users')
+  const [usersList, setUsersList] = useState<any[]>([])
+  const [logsList, setLogsList] = useState<any[]>([])
+  const [adminNewName, setAdminNewName] = useState('')
+  const [adminNewEmail, setAdminNewEmail] = useState('')
+  const [adminNewPassword, setAdminNewPassword] = useState('')
+  const [adminNewRole, setAdminNewRole] = useState<UserRole>('BUSINESS_ANALYST')
 
   const messageListRef = useRef<HTMLDivElement | null>(null)
 
@@ -425,13 +429,30 @@ function App() {
     )
   }
 
-  const loadProjects = async () => {
+  // Determine current user's role on active project
+  const getCurrentProjectRole = (): ProjectMemberRole | null => {
+    if (!currentUser) return null
+    if (currentUser.role === 'ADMIN') return 'OWNER'
+    if (projectData.owner_id === currentUser.id) return 'OWNER'
+    
+    const member = projectMembers.find(m => m.user_id === currentUser.id)
+    return member ? member.role : null
+  }
+
+  const projectRole = getCurrentProjectRole()
+
+  const loadProjects = async (authToken = token) => {
+    if (!authToken) return []
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/projects')
+      const response = await fetch('http://127.0.0.1:8000/api/projects', {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      })
       if (response.ok) {
         const list = await response.json()
         setProjectsList(list)
         return list
+      } else if (response.status === 401) {
+        handleLogout()
       }
     } catch (error) {
       console.error('Failed to load projects list', error)
@@ -440,26 +461,50 @@ function App() {
   }
 
   const handleLoadProject = async (id: number) => {
+    if (!token) return
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/project/${id}`)
+      const response = await fetch(`http://127.0.0.1:8000/api/projects/${id}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
       if (response.ok) {
         const proj = await response.json()
         setActiveProjectId(id)
         localStorage.setItem('ba_bot_active_project_id', id.toString())
         setProjectData(sanitizeProjectData(proj))
         setActivePage('interview')
+        void loadProjectMembers(id)
+      } else if (response.status === 401) {
+        handleLogout()
+      } else if (response.status === 403) {
+        alert("You do not have access to this project.")
       }
     } catch (error) {
       console.error('Failed to load project details', error)
     }
   }
 
+  const loadProjectMembers = async (projId: number) => {
+    if (!token) return
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/api/projects/${projId}/members`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      if (response.ok) {
+        const list = await response.json()
+        setProjectMembers(list)
+      }
+    } catch (error) {
+      console.error('Failed to load project members', error)
+    }
+  }
+
   const handleDeleteProject = async (id: number) => {
     if (!confirm('Are you sure you want to delete this project?')) return
-    
+    if (!token) return
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/project/${id}`, {
+      const response = await fetch(`http://127.0.0.1:8000/api/projects/${id}`, {
         method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
       })
       if (response.ok) {
         if (activeProjectId === id) {
@@ -470,9 +515,86 @@ function App() {
         await loadProjects()
         setNotice({ title: 'Project Deleted', detail: 'The project was successfully removed.' })
         setTimeout(() => setNotice(null), 1800)
+      } else {
+        alert("Only the project owner or an Administrator can delete this project.")
       }
     } catch (error) {
       console.error('Failed to delete project', error)
+    }
+  }
+
+  const handleInviteMember = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!activeProjectId || !inviteEmail.trim() || !token) return
+    
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/api/projects/${activeProjectId}/invite`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole })
+      })
+      
+      if (response.ok) {
+        const data = await response.json()
+        setNotice({ title: 'User Invited', detail: data.message })
+        setInviteEmail('')
+        void loadProjectMembers(activeProjectId)
+        setTimeout(() => setNotice(null), 1800)
+      } else {
+        const err = await response.json()
+        alert(err.detail || "Failed to invite user.")
+      }
+    } catch (error) {
+      console.error("Failed to invite member", error)
+    }
+  }
+
+  const handleSubmitForReview = async () => {
+    if (!activeProjectId || !token) return
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/api/projects/${activeProjectId}/submit`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      if (response.ok) {
+        const data = await response.json()
+        setProjectData(prev => ({ ...prev, status: data.new_status }))
+        setNotice({ title: 'Project Submitted', detail: 'Project is now under review.' })
+        setTimeout(() => setNotice(null), 1800)
+      }
+    } catch (error) {
+      console.error("Failed to submit project", error)
+    }
+  }
+
+  const handleReviewProject = async (approved: boolean) => {
+    if (!activeProjectId || !token) return
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/api/projects/${activeProjectId}/review`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ approved, feedback: reviewerFeedback })
+      })
+      if (response.ok) {
+        const data = await response.json()
+        setProjectData(prev => ({ ...prev, status: data.new_status }))
+        setReviewerFeedback('')
+        setNotice({ 
+          title: approved ? 'Project Approved' : 'Project Rejected', 
+          detail: approved ? 'Requirements document marked as approved!' : 'Project returned to Business Analyst.' 
+        })
+        setTimeout(() => setNotice(null), 1800)
+      } else {
+        alert("Failed to review project.")
+      }
+    } catch (error) {
+      console.error("Failed to review project", error)
     }
   }
 
@@ -482,32 +604,187 @@ function App() {
     }
   }, [chatMessages])
 
-  useEffect(() => {
-    const initData = async () => {
-      const list = await loadProjects()
-      setIsLoaded(true)
-      
-      if (activeProjectId) {
-        const found = list.find((p: ProjectData) => p.id === activeProjectId)
-        if (found) {
-          setProjectData(sanitizeProjectData(found))
-        } else {
-          setActiveProjectId(null)
-          localStorage.removeItem('ba_bot_active_project_id')
-        }
+  const handleAutoCreateProject = async (authToken = token) => {
+    if (!authToken) return null
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/projects', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          project: {
+            name: "Discovery Session",
+            department: "",
+            sponsor: "",
+            business_unit: "",
+            expected_completion: ""
+          },
+          overview: {},
+          discovery: {},
+          functional_requirements: [],
+          missing_fields: [],
+          next_question: ""
+        })
+      })
+      if (response.ok) {
+        const newProj = await response.json()
+        setProjectsList([newProj])
+        setActiveProjectId(newProj.id)
+        localStorage.setItem('ba_bot_active_project_id', newProj.id.toString())
+        setProjectData(sanitizeProjectData(newProj))
+        setActivePage('interview')
+        void loadProjectMembers(newProj.id)
+        return newProj
       }
+    } catch (err) {
+      console.error("Auto-create project failed", err)
     }
-    void initData()
-  }, [])
+    return null
+  }
+
+  const fetchAdminData = async () => {
+    if (!token) return
+    try {
+      const uRes = await fetch('http://127.0.0.1:8000/api/admin/users', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      if (uRes.ok) {
+        setUsersList(await uRes.json())
+      }
+      
+      const lRes = await fetch('http://127.0.0.1:8000/api/admin/audit-logs', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      if (lRes.ok) {
+        setLogsList(await lRes.json())
+      }
+    } catch (e) {
+      console.error("Failed to load admin data", e)
+    }
+  }
+
+  const handleUpdateUserRole = async (userId: number, newRole: string) => {
+    if (!token) return
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/api/admin/users/${userId}/role`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ role: newRole })
+      })
+      if (response.ok) {
+        setNotice({ title: "Role Updated", detail: `User role was successfully updated to ${newRole}.` })
+        setTimeout(() => setNotice(null), 1800)
+        await fetchAdminData()
+      } else {
+        const err = await response.json()
+        alert(err.detail || "Failed to update role.")
+      }
+    } catch (e) {
+      console.error("Failed to update role", e)
+    }
+  }
+
+  const handleCreateUserByAdmin = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!token) return
+    if (!adminNewName || !adminNewEmail || !adminNewPassword) {
+      alert("Please fill in all user details.")
+      return
+    }
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/admin/users', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          name: adminNewName,
+          email: adminNewEmail,
+          password: adminNewPassword,
+          role: adminNewRole
+        })
+      })
+      if (response.ok) {
+        setNotice({ title: "User Added", detail: `Successfully created user ${adminNewName} with role ${adminNewRole}` })
+        setTimeout(() => setNotice(null), 1800)
+        setAdminNewName('')
+        setAdminNewEmail('')
+        setAdminNewPassword('')
+        setAdminNewRole('BUSINESS_ANALYST')
+        await fetchAdminData()
+      } else {
+        const err = await response.json()
+        alert(err.detail || "Failed to create user.")
+      }
+    } catch (e) {
+      console.error("Failed to add user", e)
+    }
+  }
 
   useEffect(() => {
-    if (!isLoaded || !activeProjectId || projectData.id !== activeProjectId) return
+    if (activePage === 'admin') {
+      void fetchAdminData()
+    }
+  }, [activePage])
+
+  // Profile and Initial setup
+  useEffect(() => {
+    const fetchProfileAndProjects = async () => {
+      if (!token) {
+        setIsLoaded(true)
+        return
+      }
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/auth/me', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+        if (response.ok) {
+          const user = await response.json()
+          setCurrentUser(user)
+          const list = await loadProjects(token)
+          setIsLoaded(true)
+          
+          if (activeProjectId) {
+            const found = list.find((p: ProjectData) => p.id === activeProjectId)
+            if (found) {
+              setProjectData(sanitizeProjectData(found))
+              void loadProjectMembers(activeProjectId)
+            } else {
+              setActiveProjectId(null)
+              localStorage.removeItem('ba_bot_active_project_id')
+            }
+          }
+          setActivePage('dashboard')
+        } else {
+          handleLogout()
+          setIsLoaded(true)
+        }
+      } catch (error) {
+        console.error('Failed initialization', error)
+        setIsLoaded(true)
+      }
+    }
+    void fetchProfileAndProjects()
+  }, [token])
+
+  // Sync details on edit
+  useEffect(() => {
+    if (!isLoaded || !activeProjectId || projectData.id !== activeProjectId || !token) return
 
     const syncProjectData = async () => {
       try {
-        await fetch(`http://127.0.0.1:8000/api/project/${activeProjectId}`, {
+        await fetch(`http://127.0.0.1:8000/api/projects/${activeProjectId}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
           body: JSON.stringify(projectData),
         })
         
@@ -524,7 +801,7 @@ function App() {
     }, 500)
 
     return () => clearTimeout(timer)
-  }, [projectData, activeProjectId, isLoaded])
+  }, [projectData, activeProjectId, isLoaded, token])
 
   useEffect(() => {
     if (!projectData.messages || projectData.messages.length === 0) return;
@@ -592,19 +869,10 @@ function App() {
       100,
   )
 
-  const progressItems = [
-    { label: 'Overview', complete: Boolean(projectData.overview?.description) },
-    { label: 'Discovery', complete: Boolean(projectData.discovery?.business_problem) },
-    { label: 'Business', complete: Boolean(projectData.discovery?.business_goals) },
-    { label: 'Functional', complete: (projectData.functional_requirements?.length || 0) > 0 },
-    { label: 'NFR', complete: Boolean(projectData.discovery?.constraints) },
-    { label: 'Approval', complete: (projectData.missing_fields?.length || 0) < 2 },
-  ]
-
   const handleSend = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const incoming = draftInput.trim()
-    if (!incoming) return
+    if (!incoming || !token) return
 
     setProjectData((prev) => ({
       ...prev,
@@ -620,7 +888,10 @@ function App() {
     try {
       const response = await fetch('http://127.0.0.1:8000/api/predict', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ question: incoming, sessionId: currentSessionId, projectId: activeProjectId }),
       })
 
@@ -709,6 +980,20 @@ function App() {
         }
       }
 
+      if (activeProjectId && token) {
+        try {
+          const res = await fetch(`http://127.0.0.1:8000/api/projects/${activeProjectId}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          })
+          if (res.ok) {
+            const updatedProject = await res.json()
+            setProjectData(sanitizeProjectData(updatedProject))
+          }
+        } catch (err) {
+          console.error("Failed to sync final stream state", err)
+        }
+      }
+
       const lower = incoming.toLowerCase()
       if (lower.includes('kpi') || lower.includes('requirement')) {
         setNotice({ title: 'Requirement Added', detail: 'Business goal captured with confidence' })
@@ -743,6 +1028,7 @@ function App() {
   }
 
   const handleStartNewInterview = async () => {
+    if (!token) return
     const newProjPayload: ProjectData = {
       ...projectData,
       messages: initialMessages,
@@ -751,9 +1037,12 @@ function App() {
 
     try {
       setIsLoading(true)
-      const response = await fetch('http://127.0.0.1:8000/api/project', {
+      const response = await fetch('http://127.0.0.1:8000/api/projects', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify(newProjPayload),
       })
       
@@ -765,8 +1054,9 @@ function App() {
         localStorage.setItem('ba_bot_active_project_id', newId.toString())
         setProjectData(sanitizeProjectData(createdProj))
         
-        await loadProjects()
+        await loadProjects(token)
         setActivePage('interview')
+        void loadProjectMembers(newId)
       }
     } catch (error) {
       console.error('Failed to create new project', error)
@@ -776,7 +1066,7 @@ function App() {
   }
 
   const handleClearConversation = async () => {
-    if (!activeProjectId) return;
+    if (!activeProjectId || !token) return;
     if (!confirm('Are you sure you want to clear the conversation history?')) return;
     
     const updatedProject = {
@@ -787,9 +1077,12 @@ function App() {
     setProjectData(updatedProject);
 
     try {
-      await fetch(`http://127.0.0.1:8000/api/project/${activeProjectId}`, {
+      await fetch(`http://127.0.0.1:8000/api/projects/${activeProjectId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify(updatedProject),
       });
       setNotice({ title: 'Chat Cleared', detail: 'Conversation history reset successfully.' });
@@ -825,7 +1118,10 @@ function App() {
       setIsLoading(true)
       
       try {
-        const response = await fetch(`http://127.0.0.1:8000/api/project/${activeProjectId}/export?format=${format}`)
+        const response = await fetch(`http://127.0.0.1:8000/api/projects/${activeProjectId}/export?format=${format}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+        
         if (!response.ok) {
           throw new Error('Export request failed')
         }
@@ -861,11 +1157,296 @@ function App() {
     setTimeout(() => setNotice(null), 1800)
   }
 
+  // Authentication logic handlers
+  const handleLoginSubmit = async (e: FormEvent) => {
+    e.preventDefault()
+    setAuthError('')
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: loginEmail, password: loginPassword })
+      })
+      if (response.ok) {
+        const data = await response.json()
+        localStorage.setItem('ba_bot_token', data.access_token)
+        setToken(data.access_token)
+        setCurrentUser(data.user)
+        setLoginEmail('')
+        setLoginPassword('')
+        setNotice({ title: 'Welcome Back', detail: `Successfully signed in as ${data.user.name}` })
+        setTimeout(() => setNotice(null), 1800)
+      } else {
+        const err = await response.json()
+        setAuthError(err.detail || "Authentication failed. Check credentials.")
+      }
+    } catch (e) {
+      setAuthError("Server is unreachable. Make sure the backend is running.")
+    }
+  }
+
+  const handleRegisterSubmit = async (e: FormEvent) => {
+    e.preventDefault()
+    setAuthError('')
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: regName, email: regEmail, password: regPassword, role: regRole })
+      })
+      if (response.ok) {
+        setNotice({ title: 'Registration Complete', detail: 'Account created! Logging in now...' })
+        // Autologin after registration
+        const loginRes = await fetch('http://127.0.0.1:8000/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: regEmail, password: regPassword })
+        })
+        if (loginRes.ok) {
+          const data = await loginRes.json()
+          localStorage.setItem('ba_bot_token', data.access_token)
+          setToken(data.access_token)
+          setCurrentUser(data.user)
+          setRegName('')
+          setRegEmail('')
+          setRegPassword('')
+        }
+        setTimeout(() => setNotice(null), 1800)
+      } else {
+        const err = await response.json()
+        setAuthError(err.detail || "Registration failed. Verify fields.")
+      }
+    } catch (e) {
+      setAuthError("Connection refused by server.")
+    }
+  }
+
+  const handleLogout = async () => {
+    if (token) {
+      try {
+        await fetch('http://127.0.0.1:8000/api/auth/logout', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+      } catch (e) {}
+    }
+    localStorage.removeItem('ba_bot_token')
+    localStorage.removeItem('ba_bot_active_project_id')
+    setToken(null)
+    setCurrentUser(null)
+    setActiveProjectId(null)
+    setProjectData(initialProject)
+    setProjectsList([])
+    setActivePage('dashboard')
+  }
+
+  const getStatusColor = (status: string = 'DRAFT') => {
+    switch (status) {
+      case 'APPROVED': return '#10b981';
+      case 'IN_REVIEW': return '#f59e0b';
+      case 'REJECTED': return '#ef4444';
+      default: return '#64748b';
+    }
+  }
+
+  const getRoleLabel = (role: UserRole) => {
+    switch (role) {
+      case 'ADMIN': return 'Administrator';
+      case 'BUSINESS_ANALYST': return 'Business Analyst';
+      case 'REVIEWER': return 'Review Committee';
+      default: return role;
+    }
+  }
+
+  // --- RENDERS ---
+
+  const renderAuthPage = () => {
+    return (
+      <div className="auth-wrapper" style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '100vh',
+        background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)',
+        padding: '20px'
+      }}>
+        <div className="auth-container" style={{
+          width: '100%',
+          maxWidth: '440px',
+          background: 'rgba(255, 255, 255, 0.95)',
+          borderRadius: '24px',
+          boxShadow: '0 20px 40px rgba(0, 0, 0, 0.3)',
+          overflow: 'hidden',
+          transition: 'all 0.3s ease'
+        }}>
+          <div className="auth-tabs" style={{
+            display: 'flex',
+            borderBottom: '1px solid #e2e8f0'
+          }}>
+            <button 
+              onClick={() => { setAuthTab('login'); setAuthError('') }}
+              style={{
+                flex: 1,
+                padding: '16px',
+                background: authTab === 'login' ? 'transparent' : '#f8fafc',
+                border: 'none',
+                fontWeight: '700',
+                color: authTab === 'login' ? '#3755d4' : '#64748b',
+                cursor: 'pointer',
+                borderBottom: authTab === 'login' ? '3px solid #3755d4' : 'none'
+              }}
+            >
+              Sign In
+            </button>
+            <button 
+              onClick={() => { setAuthTab('register'); setAuthError('') }}
+              style={{
+                flex: 1,
+                padding: '16px',
+                background: authTab === 'register' ? 'transparent' : '#f8fafc',
+                border: 'none',
+                fontWeight: '700',
+                color: authTab === 'register' ? '#3755d4' : '#64748b',
+                cursor: 'pointer',
+                borderBottom: authTab === 'register' ? '3px solid #3755d4' : 'none'
+              }}
+            >
+              Register
+            </button>
+          </div>
+
+          <div style={{ padding: '32px' }}>
+            <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+              <h2 style={{ margin: '0 0 6px 0', color: '#0f172a', fontSize: '1.6rem' }}>BA Bot</h2>
+              <p style={{ margin: '0', color: '#64748b', fontSize: '0.9rem' }}>Enterprise Requirement Discovery Workshop</p>
+            </div>
+
+            {authError && (
+              <div style={{
+                background: '#fef2f2',
+                border: '1px solid #fee2e2',
+                color: '#b91c1c',
+                padding: '12px 16px',
+                borderRadius: '10px',
+                fontSize: '0.85rem',
+                marginBottom: '20px',
+                fontWeight: '500'
+              }}>
+                ⚠️ {authError}
+              </div>
+            )}
+
+            {authTab === 'login' ? (
+              <form onSubmit={handleLoginSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', fontWeight: '600', color: '#334155' }}>
+                  Email Address
+                  <input 
+                    type="email" 
+                    value={loginEmail} 
+                    onChange={e => setLoginEmail(e.target.value)} 
+                    required 
+                    placeholder="name@company.com"
+                    style={{ padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1' }}
+                  />
+                </label>
+
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', fontWeight: '600', color: '#334155' }}>
+                  Password
+                  <input 
+                    type="password" 
+                    value={loginPassword} 
+                    onChange={e => setLoginPassword(e.target.value)} 
+                    required 
+                    placeholder="••••••••"
+                    style={{ padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1' }}
+                  />
+                </label>
+
+                <button type="submit" className="primary" style={{
+                  padding: '14px',
+                  borderRadius: '12px',
+                  fontSize: '1rem',
+                  marginTop: '12px',
+                  boxShadow: '0 4px 6px -1px rgba(55, 85, 212, 0.3)'
+                }}>
+                  Sign In
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleRegisterSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.85rem', fontWeight: '600', color: '#334155' }}>
+                  Full Name
+                  <input 
+                    type="text" 
+                    value={regName} 
+                    onChange={e => setRegName(e.target.value)} 
+                    required 
+                    placeholder="John Doe"
+                    style={{ padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1' }}
+                  />
+                </label>
+
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.85rem', fontWeight: '600', color: '#334155' }}>
+                  Email Address
+                  <input 
+                    type="email" 
+                    value={regEmail} 
+                    onChange={e => setRegEmail(e.target.value)} 
+                    required 
+                    placeholder="name@company.com"
+                    style={{ padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1' }}
+                  />
+                </label>
+
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.85rem', fontWeight: '600', color: '#334155' }}>
+                  Password
+                  <input 
+                    type="password" 
+                    value={regPassword} 
+                    onChange={e => setRegPassword(e.target.value)} 
+                    required 
+                    placeholder="••••••••"
+                    style={{ padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1' }}
+                  />
+                </label>
+
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.85rem', fontWeight: '600', color: '#334155' }}>
+                  Role Selection
+                  <select 
+                    value={regRole} 
+                    onChange={e => setRegRole(e.target.value as UserRole)}
+                    style={{ padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', background: 'white' }}
+                  >
+                    <option value="BUSINESS_ANALYST">Business Analyst</option>
+                    <option value="REVIEWER">Reviewer Committee</option>
+                    <option value="ADMIN">System Admin</option>
+                  </select>
+                </label>
+
+                <button type="submit" className="primary" style={{
+                  padding: '14px',
+                  borderRadius: '12px',
+                  fontSize: '1rem',
+                  marginTop: '12px',
+                  boxShadow: '0 4px 6px -1px rgba(55, 85, 212, 0.3)'
+                }}>
+                  Create Account
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   const renderDashboard = () => {
     const totalProjects = projectsList.length
     const completedProjects = projectsList.filter(p => calculateCompletion(p) === 100).length
     const pendingProjects = totalProjects - completedProjects
     const hoursSaved = completedProjects * 6
+
+    const canCreate = currentUser && (currentUser.role === 'ADMIN' || currentUser.role === 'BUSINESS_ANALYST')
 
     return (
       <div className="dashboard-layout" style={{ display: 'flex', flexDirection: 'column', gap: '32px', width: '100%' }}>
@@ -883,32 +1464,32 @@ function App() {
               marginTop: '20px' 
             }}
           >
-            <article 
-              className="project-tile plus-tile" 
-              onClick={() => {
-                setProjectData(initialProject)
-                setActivePage('new-project')
-              }}
-              style={{
-                border: '2px dashed #b2c5df',
-                borderRadius: '16px',
-                padding: '24px',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                minHeight: '180px',
-                cursor: 'pointer',
-                backgroundColor: '#fcfdff',
-                transition: 'all 0.2s ease',
-              }}
-            >
-              <span style={{ fontSize: '3.5rem', color: '#3755d4', lineHeight: 1 }}>+</span>
-              <span style={{ fontWeight: '600', color: '#4b5c77', marginTop: '12px' }}>New Project</span>
-            </article>
+            {canCreate && (
+              <article 
+                className="project-tile plus-tile" 
+                onClick={handleStartNewInterview}
+                style={{
+                  border: '2px dashed #b2c5df',
+                  borderRadius: '16px',
+                  padding: '24px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  minHeight: '180px',
+                  cursor: 'pointer',
+                  backgroundColor: '#fcfdff',
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                <span style={{ fontSize: '3.5rem', color: '#3755d4', lineHeight: 1 }}>+</span>
+                <span style={{ fontWeight: '600', color: '#4b5c77', marginTop: '12px' }}>Add Project</span>
+              </article>
+            )}
 
             {projectsList.map((p) => {
               const comp = calculateCompletion(p);
+              const isOwner = currentUser && (p.owner_id === currentUser.id || currentUser.role === 'ADMIN');
               return (
                 <article 
                   key={p.id} 
@@ -929,9 +1510,21 @@ function App() {
                   onClick={() => handleLoadProject(p.id!)}
                 >
                   <div style={{ paddingRight: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.2rem', color: '#1e293b' }}>
-                      {p.project?.name || 'Untitled Project'}
-                    </h3>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px' }}>
+                      <h3 style={{ margin: '0', fontSize: '1.2rem', color: '#1e293b', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {p.project?.name || 'Untitled Project'}
+                      </h3>
+                      <span style={{
+                        fontSize: '0.7rem',
+                        fontWeight: '700',
+                        padding: '3px 8px',
+                        borderRadius: '6px',
+                        background: `${getStatusColor(p.status)}22`,
+                        color: getStatusColor(p.status)
+                      }}>
+                        {p.status || 'DRAFT'}
+                      </span>
+                    </div>
                     <p style={{ margin: '0', fontSize: '0.85rem', color: '#64748b' }}>Dept: {p.project?.department || 'N/A'}</p>
                     <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: '#64748b' }}>Sponsor: {p.project?.sponsor || 'N/A'}</p>
                   </div>
@@ -944,29 +1537,38 @@ function App() {
                       <div style={{ height: '100%', width: `${comp}%`, backgroundColor: comp === 100 ? '#10b981' : '#3755d4', borderRadius: '3px' }} />
                     </div>
                   </div>
-                  <button 
-                    style={{
-                      position: 'absolute',
-                      top: '16px',
-                      right: '16px',
-                      background: 'none',
-                      border: 'none',
-                      color: '#94a3b8',
-                      cursor: 'pointer',
-                      fontSize: '1.2rem',
-                      padding: '4px',
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteProject(p.id!);
-                    }}
-                    title="Delete Project"
-                  >
-                    🗑️
-                  </button>
+                  
+                  {isOwner && (
+                    <button 
+                      style={{
+                        position: 'absolute',
+                        top: '16px',
+                        right: '16px',
+                        background: 'none',
+                        border: 'none',
+                        color: '#94a3b8',
+                        cursor: 'pointer',
+                        fontSize: '1.2rem',
+                        padding: '4px',
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteProject(p.id!);
+                      }}
+                      title="Delete Project"
+                    >
+                      🗑️
+                    </button>
+                  )}
                 </article>
               );
             })}
+
+            {projectsList.length === 0 && (
+              <div style={{ gridColumn: '1 / -1', padding: '48px', textAlign: 'center', color: '#64748b' }}>
+                <p>No active projects found. Get started by creating a new project interview workshop.</p>
+              </div>
+            )}
           </div>
         </section>
 
@@ -1062,274 +1664,710 @@ function App() {
     </div>
   )
 
-  const renderInterview = () => (
-    <div className="interview-shell">
-      <div className="panel-header interview-header">
-        <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-          <button 
-            className="secondary" 
-            onClick={() => setActivePage('dashboard')}
-            style={{ padding: '8px 14px', fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
-          >
-            ⬅ Back to Dashboard
-          </button>
-          <div>
-            <p className="eyebrow">AI Interview</p>
-            <h2>Interview Workspace</h2>
-          </div>
-        </div>
-        <button className="secondary" onClick={() => setActivePage('review')}>
-          Go to Review
-        </button>
-      </div>
-
-      <div className="workspace-grid" style={{ gridTemplateColumns: '1fr' }}>
-        <section className="panel chat-panel" style={{ gridColumn: 'span 1' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h3 style={{ margin: '0' }}>Chat</h3>
+  const renderInterview = () => {
+    const isViewer = projectRole === 'VIEWER'
+    const isOwnerOrAdmin = currentUser && (projectData.owner_id === currentUser.id || currentUser.role === 'ADMIN')
+    
+    // Status banners
+    const isApproved = projectData.status === 'APPROVED'
+    const isInReview = projectData.status === 'IN_REVIEW'
+    
+    return (
+      <div className="interview-shell">
+        <div className="panel-header interview-header" style={{ borderLeft: `6px solid ${getStatusColor(projectData.status)}` }}>
+          <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
             <button 
               className="secondary" 
-              onClick={handleClearConversation}
-              style={{ fontSize: '0.85rem', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}
+              onClick={() => setActivePage('dashboard')}
+              style={{ padding: '8px 14px', fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
             >
-              🗑️ Clear Chat
+              📋 All Projects
             </button>
-          </div>
-          <div className="message-list" ref={messageListRef} style={{ minHeight: '450px', maxHeight: '60vh', overflowY: 'auto' }}>
-            {chatMessages.map((message, index) => (
-              <div key={`${message.role}-${index}`} className={`message ${message.role}`}>
-                <strong>{message.role === 'ai' ? 'AI' : 'Customer'}</strong>
-                <div>{parseContent(message.text)}</div>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <p className="eyebrow" style={{ margin: '0' }}>AI Interview</p>
+                <span style={{
+                  fontSize: '0.75rem',
+                  fontWeight: '700',
+                  padding: '2px 8px',
+                  borderRadius: '6px',
+                  background: `${getStatusColor(projectData.status)}22`,
+                  color: getStatusColor(projectData.status)
+                }}>
+                  {projectData.status}
+                </span>
               </div>
-            ))}
+              <h2 style={{ marginTop: '4px' }}>{projectData.project?.name || 'Interview Workspace'}</h2>
+            </div>
           </div>
-
-          <div className="suggestions">
-            <span>Suggested questions</span>
-            {['Existing software?', 'Number of users?', 'Reports?', 'Integrations?'].map((item) => (
-              <button key={item} className="chip" onClick={() => setDraftInput(item)}>
-                {item}
+          <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
+            {projectData.status === 'DRAFT' && isOwnerOrAdmin && (
+              <button className="primary" style={{ backgroundColor: '#f59e0b' }} onClick={handleSubmitForReview}>
+                Submit for Review
               </button>
-            ))}
-          </div>
-
-          <form className="composer" onSubmit={handleSend}>
-            <input
-              value={draftInput}
-              onChange={(event: ChangeEvent<HTMLInputElement>) => setDraftInput(event.target.value)}
-              placeholder="Type your answer..."
-            />
-            <button className="primary" type="submit" disabled={isLoading}>
-              {isLoading ? 'Sending…' : 'Send'}
+            )}
+            <button className="secondary" onClick={() => setActivePage('review')}>
+              Go to Review &amp; Export
             </button>
-          </form>
-        </section>
-      </div>
-
-      {notice && (
-        <div className="toast">
-          <strong>{notice.title}</strong>
-          <p>{notice.detail}</p>
-        </div>
-      )}
-    </div>
-  )
-
-  const renderReview = () => (
-    <div className="review-workspace-layout">
-      <div style={{ gridColumn: 'span 2', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid #e7ebf2' }}>
-        <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-          <button 
-            className="secondary" 
-            onClick={() => setActivePage('dashboard')}
-            style={{ padding: '8px 14px', fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
-          >
-            ⬅ Back to Dashboard
-          </button>
-          <div>
-            <p className="eyebrow">Review Workspace</p>
-            <h2>Compile &amp; Export Requirements</h2>
+            {currentUser?.role === 'ADMIN' && (
+              <button 
+                className="secondary" 
+                onClick={() => setActivePage('admin')} 
+                style={{ fontSize: '0.85rem', padding: '8px 16px', background: '#eff6ff', color: '#1e40af', border: '1px solid #bfdbfe', cursor: 'pointer' }}
+              >
+                🛡️ Admin Panel
+              </button>
+            )}
+            <div className="profile-pill" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', borderRadius: '12px', background: '#f8fafc', border: '1px solid #cbd5e1', padding: '6px 14px' }}>
+              <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#1e293b' }}>{currentUser?.name}</span>
+              <span style={{ fontSize: '0.7rem', fontWeight: '700', color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                {currentUser && getRoleLabel(currentUser.role)}
+              </span>
+            </div>
+            <button className="secondary" onClick={handleLogout} style={{ fontSize: '0.85rem', padding: '8px 16px', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fecaca', cursor: 'pointer' }}>
+              Sign Out 🚪
+            </button>
           </div>
         </div>
-        <button className="primary" onClick={() => setActivePage('interview')}>
-          Back to Chat
-        </button>
-      </div>
 
-      <div className="review-main-column">
-        <section className="page review-card">
-          <div className="section-heading">
-            <h2>Requirement Discovery Complete</h2>
-            <span className="badge success">{completion}%</span>
-          </div>
-          <div className="review-actions">
-            <button className="secondary" onClick={() => handleReviewAction('Edit Overview')}>
-              Edit Overview
-            </button>
-            <button className="secondary" onClick={() => handleReviewAction('Edit Discovery')}>
-              Edit Discovery
-            </button>
-            <button className="secondary" onClick={() => handleReviewAction('Edit Functional Requirements')}>
-              Edit Functional Requirements
-            </button>
-            <button className="secondary" onClick={() => handleReviewAction('Edit Security')}>
-              Edit Security
-            </button>
-            <button className="primary" onClick={() => handleReviewAction('Generate DOCX')}>
-              Generate DOCX
-            </button>
-            <button className="secondary" onClick={() => handleReviewAction('Generate PDF')}>
-              Generate PDF
-            </button>
-          </div>
-          <div className="preview-card">
-            <div className="preview-heading">
-              <h3>Document Preview</h3>
-              <span className="badge">HTML preview</span>
+        <div className="workspace-grid" style={{ display: 'grid', gridTemplateColumns: '3fr 1.2fr', gap: '24px', marginTop: '20px' }}>
+          
+          {/* Main Chat Panel */}
+          <section className="panel chat-panel" style={{ height: 'fit-content' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: '0' }}>Chat</h3>
+              {!isViewer && projectData.status === 'DRAFT' && (
+                <button 
+                  className="secondary" 
+                  onClick={handleClearConversation}
+                  style={{ fontSize: '0.85rem', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}
+                >
+                  🗑️ Clear Chat
+                </button>
+              )}
             </div>
-            <div className="preview-pages">
-              <div className="preview-page">
-                <h4>Requirement Discovery Form</h4>
-                <p>{projectData.project?.name || <em style={{ color: '#aaa' }}>No project name</em>}</p>
-                <p>{projectData.overview?.description || <em style={{ color: '#aaa' }}>No description</em>}</p>
+            
+            {/* Status alerts */}
+            {isApproved && (
+              <div style={{ background: '#ecfdf5', border: '1px solid #d1fae5', color: '#065f46', padding: '12px', borderRadius: '10px', marginBottom: '14px', fontSize: '0.85rem' }}>
+                ✅ This project has been **APPROVED** by the Review Committee. Chat is now locked.
               </div>
-              <div className="preview-page">
-                <h4>Page 2</h4>
-                <p>{projectData.discovery?.business_problem || <em style={{ color: '#aaa' }}>No business problem</em>}</p>
-                <p>{projectData.discovery?.business_goals || <em style={{ color: '#aaa' }}>No business goals</em>}</p>
+            )}
+            {isInReview && (
+              <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', color: '#92400e', padding: '12px', borderRadius: '10px', marginBottom: '14px', fontSize: '0.85rem' }}>
+                ⏳ This project is currently **UNDER REVIEW**. Chat is temporarily locked.
               </div>
-              <div className="preview-page">
-                <h4>Page 3</h4>
-                <p>
-                  Requirements:{' '}
-                  {projectData.functional_requirements && projectData.functional_requirements.length > 0 ? (
-                    projectData.functional_requirements.map((item) => item.title).join(', ')
-                  ) : (
-                    <em style={{ color: '#aaa' }}>No requirements captured</em>
-                  )}
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-      </div>
+            )}
 
-      <div className="review-status-column">
-        <section className="panel">
-          <h3>Requirement Cards</h3>
-          {projectData.functional_requirements && projectData.functional_requirements.length > 0 ? (
-            projectData.functional_requirements.map((item) => (
-              <div key={item.title} className="requirement-card">
-                <strong>{item.title}</strong>
-                <p>Priority: {item.priority}</p>
-                <p>Confidence: {(item.confidence * 100).toFixed(0)}%</p>
-                <p>Source: Conversation 18</p>
-              </div>
-            ))
-          ) : (
-            <p className="muted" style={{ fontStyle: 'italic', fontSize: '0.9rem' }}>No requirements extracted yet.</p>
-          )}
-        </section>
-
-        <section className="panel">
-          <h3>Missing Fields</h3>
-          {projectData.missing_fields && projectData.missing_fields.length > 0 ? (
-            <ul className="missing-list">
-              {projectData.missing_fields.map((item) => (
-                <li key={item}>{item}</li>
+            <div className="message-list" ref={messageListRef} style={{ minHeight: '400px', maxHeight: '55vh', overflowY: 'auto' }}>
+              {chatMessages.map((message, index) => (
+                <div key={`${message.role}-${index}`} className={`message ${message.role}`}>
+                  <strong>{message.role === 'ai' ? 'AI' : 'Customer'}</strong>
+                  <div>{parseContent(message.text)}</div>
+                </div>
               ))}
-            </ul>
-          ) : (
-            <p className="muted" style={{ fontStyle: 'italic', fontSize: '0.9rem', color: '#0f7b45' }}>✓ All fields complete!</p>
-          )}
-        </section>
+            </div>
 
-        <section className="panel">
-          <h3>Timeline</h3>
-          <div className="timeline">
+            {!isViewer && projectData.status === 'DRAFT' ? (
+              <>
+                <div className="suggestions">
+                  <span>Suggested questions</span>
+                  {['Existing software?', 'Number of users?', 'Reports?', 'Integrations?'].map((item) => (
+                    <button key={item} className="chip" onClick={() => setDraftInput(item)}>
+                      {item}
+                    </button>
+                  ))}
+                </div>
+
+                <form className="composer" onSubmit={handleSend}>
+                  <input
+                    value={draftInput}
+                    onChange={(event: ChangeEvent<HTMLInputElement>) => setDraftInput(event.target.value)}
+                    placeholder="Type your answer..."
+                  />
+                  <button className="primary" type="submit" disabled={isLoading}>
+                    {isLoading ? 'Sending…' : 'Send'}
+                  </button>
+                </form>
+              </>
+            ) : (
+              <div style={{
+                background: '#f8fafc',
+                border: '1px solid #e2e8f0',
+                padding: '16px',
+                borderRadius: '12px',
+                color: '#64748b',
+                textAlign: 'center',
+                marginTop: '16px',
+                fontSize: '0.9rem',
+                fontWeight: '500'
+              }}>
+                🔒 {isViewer ? 'You have VIEW-ONLY access to this project.' : 'Chat is disabled during review/approval.'}
+              </div>
+            )}
+          </section>
+
+          {/* Members & Collaboration Panel */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            <section className="panel" style={{ background: '#ffffff', borderRadius: '20px', padding: '20px', border: '1px solid #e2e8f0' }}>
+              <h3 style={{ margin: '0 0 16px 0', color: '#1e293b' }}>Project Collaboration</h3>
+              
+              {isOwnerOrAdmin ? (
+                <form onSubmit={handleInviteMember} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid #e2e8f0' }}>
+                  <label style={{ fontSize: '0.8rem', fontWeight: '700', color: '#475569', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    Invite User by Email
+                    <input 
+                      type="email" 
+                      value={inviteEmail} 
+                      onChange={e => setInviteEmail(e.target.value)}
+                      placeholder="colleague@company.com"
+                      required
+                      style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                    />
+                  </label>
+                  
+                  <label style={{ fontSize: '0.8rem', fontWeight: '700', color: '#475569', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    Project Role
+                    <select 
+                      value={inviteRole} 
+                      onChange={e => setInviteRole(e.target.value as ProjectMemberRole)}
+                      style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', fontSize: '0.85rem' }}
+                    >
+                      <option value="EDITOR">Editor (Can Chat & Edit)</option>
+                      <option value="VIEWER">Viewer (Read Only)</option>
+                    </select>
+                  </label>
+
+                  <button type="submit" className="primary" style={{ padding: '8px', borderRadius: '8px', fontSize: '0.85rem' }}>
+                    Invite Member
+                  </button>
+                </form>
+              ) : null}
+
+              <div>
+                <h4 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: '#475569' }}>Project Members</h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {/* Show Owner first */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '8px 12px', borderRadius: '8px' }}>
+                    <div>
+                      <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#1e293b' }}>
+                        {isOwnerOrAdmin && projectData.owner_id === currentUser?.id ? 'You' : 'Project Owner'}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Owner</div>
+                    </div>
+                    <span style={{ fontSize: '0.7rem', padding: '2px 6px', background: '#eff6ff', color: '#2563eb', borderRadius: '6px', fontWeight: '700' }}>OWNER</span>
+                  </div>
+
+                  {projectMembers.filter(m => m.role !== 'OWNER').map(m => (
+                    <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '8px 12px', borderRadius: '8px' }}>
+                      <div style={{ maxWidth: '140px', overflow: 'hidden' }}>
+                        <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#1e293b', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{m.name}</div>
+                        <div style={{ fontSize: '0.75rem', color: '#64748b', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{m.email}</div>
+                      </div>
+                      <span style={{ 
+                        fontSize: '0.7rem', 
+                        padding: '2px 6px', 
+                        background: m.role === 'EDITOR' ? '#f0fdf4' : '#f1f5f9', 
+                        color: m.role === 'EDITOR' ? '#166534' : '#475569', 
+                        borderRadius: '6px', 
+                        fontWeight: '700' 
+                      }}>
+                        {m.role}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        {notice && (
+          <div className="toast">
+            <strong>{notice.title}</strong>
+            <p>{notice.detail}</p>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const renderReview = () => {
+    const isReviewerOrAdmin = currentUser && (currentUser.role === 'REVIEWER' || currentUser.role === 'ADMIN')
+    const isApproved = projectData.status === 'APPROVED'
+    
+    return (
+      <div className="review-workspace-layout">
+        <div style={{ gridColumn: 'span 2', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid #e7ebf2' }}>
+          <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+            <button 
+              className="secondary" 
+              onClick={() => setActivePage('interview')}
+              style={{ padding: '8px 14px', fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              ⬅ Back to Chat
+            </button>
             <div>
-              <strong>10:02</strong>
-              <p>Overview completed</p>
+              <p className="eyebrow">Review Workspace</p>
+              <h2>Compile &amp; Export Requirements</h2>
             </div>
-            <div>
-              <strong>10:08</strong>
-              <p>Business problem extracted</p>
+          </div>
+          <button className="primary" onClick={() => setActivePage('interview')}>
+            Back to Chat Workspace
+          </button>
+        </div>
+
+        {/* Status specific notices */}
+        {projectData.status === 'IN_REVIEW' && (
+          <div style={{ gridColumn: 'span 2', background: '#fffbeb', border: '1px solid #fef3c7', color: '#92400e', padding: '16px', borderRadius: '12px', marginBottom: '20px' }}>
+            <strong>⏳ Project Review Pending:</strong> This project requirements checklist has been submitted for review.
+          </div>
+        )}
+        {projectData.status === 'APPROVED' && (
+          <div style={{ gridColumn: 'span 2', background: '#ecfdf5', border: '1px solid #d1fae5', color: '#065f46', padding: '16px', borderRadius: '12px', marginBottom: '20px' }}>
+            <strong>✅ Approved requirements:</strong> This requirements documentation is fully approved.
+          </div>
+        )}
+
+        <div className="review-main-column">
+          <section className="page review-card">
+            <div className="section-heading">
+              <h2>Requirement Discovery Checklist</h2>
+              <span className="badge success">{completion}%</span>
             </div>
-            <div>
-              <strong>10:14</strong>
-              <p>Stakeholders added</p>
+
+            <div className="review-actions" style={{ marginTop: '20px' }}>
+              {projectRole === 'OWNER' && projectData.status === 'DRAFT' && (
+                <>
+                  <button className="secondary" onClick={() => handleReviewAction('Edit Overview')}>
+                    Edit Overview
+                  </button>
+                  <button className="secondary" onClick={() => handleReviewAction('Edit Discovery')}>
+                    Edit Discovery
+                  </button>
+                  <button className="secondary" onClick={() => handleReviewAction('Edit Functional Requirements')}>
+                    Edit Functional Requirements
+                  </button>
+                </>
+              )}
+
+              <button className="primary" onClick={() => handleReviewAction('Generate DOCX')} disabled={isLoading}>
+                Generate DOCX
+              </button>
+              <button className="secondary" onClick={() => handleReviewAction('Generate PDF')} disabled={isLoading}>
+                Generate PDF
+              </button>
+            </div>
+
+            {/* Reviewer decision panel */}
+            {isReviewerOrAdmin && projectData.status === 'IN_REVIEW' && (
+              <div style={{
+                background: '#f8fafc',
+                border: '1px solid #cbd5e1',
+                padding: '24px',
+                borderRadius: '16px',
+                marginTop: '24px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '14px'
+              }}>
+                <h3 style={{ margin: '0', color: '#0f172a' }}>Review Decision Portal</h3>
+                <p style={{ margin: '0', color: '#475569', fontSize: '0.9rem' }}>
+                  Please inspect the discovery details and requirements cards on the right column before approving or rejecting.
+                </p>
+                <textarea
+                  value={reviewerFeedback}
+                  onChange={e => setReviewerFeedback(e.target.value)}
+                  placeholder="Provide review notes or rejection feedback..."
+                  rows={3}
+                  style={{
+                    padding: '10px 14px',
+                    borderRadius: '10px',
+                    border: '1px solid #cbd5e1',
+                    fontSize: '0.9rem',
+                    width: '100%',
+                    fontFamily: 'inherit'
+                  }}
+                />
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <button className="primary" style={{ backgroundColor: '#10b981' }} onClick={() => handleReviewProject(true)}>
+                    Approve FDR Document
+                  </button>
+                  <button className="secondary" style={{ backgroundColor: '#ef4444', color: 'white' }} onClick={() => handleReviewProject(false)}>
+                    Reject &amp; Return Draft
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="preview-card" style={{ marginTop: '32px' }}>
+              <div className="preview-heading">
+                <h3>Document Preview</h3>
+                <span className="badge">HTML preview</span>
+              </div>
+              <div className="preview-pages">
+                <div className="preview-page">
+                  <h4>Requirement Discovery Form</h4>
+                  <p>{projectData.project?.name || <em style={{ color: '#aaa' }}>No project name</em>}</p>
+                  <p>{projectData.overview?.description || <em style={{ color: '#aaa' }}>No description</em>}</p>
+                </div>
+                <div className="preview-page">
+                  <h4>Page 2</h4>
+                  <p>{projectData.discovery?.business_problem || <em style={{ color: '#aaa' }}>No business problem</em>}</p>
+                  <p>{projectData.discovery?.business_goals || <em style={{ color: '#aaa' }}>No business goals</em>}</p>
+                </div>
+                <div className="preview-page">
+                  <h4>Page 3</h4>
+                  <p>
+                    Requirements:{' '}
+                    {projectData.functional_requirements && projectData.functional_requirements.length > 0 ? (
+                      projectData.functional_requirements.map((item) => item.title).join(', ')
+                    ) : (
+                      <em style={{ color: '#aaa' }}>No requirements captured</em>
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div className="review-status-column">
+          <section className="panel">
+            <h3>Requirement Cards</h3>
+            {projectData.functional_requirements && projectData.functional_requirements.length > 0 ? (
+              projectData.functional_requirements.map((item) => (
+                <div key={item.title} className="requirement-card">
+                  <strong>{item.title}</strong>
+                  <p>Priority: {item.priority}</p>
+                  <p>Confidence: {(item.confidence * 100).toFixed(0)}%</p>
+                  <p>Source: Conversation 18</p>
+                </div>
+              ))
+            ) : (
+              <p className="muted" style={{ fontStyle: 'italic', fontSize: '0.9rem' }}>No requirements extracted yet.</p>
+            )}
+          </section>
+
+          <section className="panel">
+            <h3>Missing Fields</h3>
+            {projectData.missing_fields && projectData.missing_fields.length > 0 ? (
+              <ul className="missing-list">
+                {projectData.missing_fields.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted" style={{ fontStyle: 'italic', fontSize: '0.9rem', color: '#0f7b45' }}>✓ All fields complete!</p>
+            )}
+          </section>
+        </div>
+      </div>
+    )
+  }
+
+  const renderExport = () => {
+    return (
+      <div className="page centered-page" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '16px' }}>
+        <button 
+          className="secondary" 
+          onClick={() => setActivePage('interview')}
+          style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '0.9rem' }}
+        >
+          ⬅ Back to Chat
+        </button>
+        <section className="page export-card" style={{ width: '100%' }}>
+          <h2>Export Project Requirements</h2>
+          
+          <p className="muted" style={{ marginBottom: '24px' }}>
+            Select your preferred document format to download and share the compiled discovery results.
+          </p>
+          
+          <div className="export-options-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
+            <div className="export-option-card" style={{ border: '1px solid #e7ebf2', padding: '24px', borderRadius: '16px', backgroundColor: '#fcfdff', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', height: '36px' }}>
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#3755d4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+              </span>
+              <h3 style={{ margin: '0' }}>Microsoft Word Document</h3>
+              <p className="muted" style={{ fontSize: '0.9rem', margin: '0', flex: 1 }}>
+                Download the fully structured discovery report as an editable Word Document (.docx) formatted with standard headings and layout.
+              </p>
+              
+              <button className="primary" onClick={() => handleReviewAction('Generate DOCX')} style={{ width: '100%', marginTop: '12px' }}>
+                Export as Word (.docx)
+              </button>
+            </div>
+
+            <div className="export-option-card" style={{ border: '1px solid #e7ebf2', padding: '24px', borderRadius: '16px', backgroundColor: '#fcfdff', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', height: '36px' }}>
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#e11d48" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M9 15h1a1.5 1.5 0 0 0 0-3H9v4z"></path><path d="M12 12v4"></path><path d="M12 12a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2"></path></svg>
+              </span>
+              <h3 style={{ margin: '0' }}>Adobe PDF Document</h3>
+              <p className="muted" style={{ fontSize: '0.9rem', margin: '0', flex: 1 }}>
+                Generate a print-ready, read-only PDF document (.pdf) containing all extracted functional requirements, timeline details, and business outcomes.
+              </p>
+
+              <button className="primary" onClick={() => handleReviewAction('Generate PDF')} style={{ width: '100%', marginTop: '12px' }}>
+                Export as PDF (.pdf)
+              </button>
             </div>
           </div>
         </section>
       </div>
-    </div>
-  )
+    )
+  }
 
-  const renderExport = () => (
-    <div className="page centered-page" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '16px' }}>
-      <button 
-        className="secondary" 
-        onClick={() => setActivePage('dashboard')}
-        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '0.9rem' }}
-      >
-        ⬅ Back to Dashboard
-      </button>
-      <section className="page export-card" style={{ width: '100%' }}>
-        <h2>Export Project Requirements</h2>
-        <p className="muted" style={{ marginBottom: '24px' }}>
-          Select your preferred document format to download and share the compiled discovery results.
-        </p>
-        
-        <div className="export-options-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
-          <div className="export-option-card" style={{ border: '1px solid #e7ebf2', padding: '24px', borderRadius: '16px', backgroundColor: '#fcfdff', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', height: '36px' }}>
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#3755d4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-            </span>
-            <h3 style={{ margin: '0' }}>Microsoft Word Document</h3>
-            <p className="muted" style={{ fontSize: '0.9rem', margin: '0', flex: 1 }}>
-              Download the fully structured discovery report as an editable Word Document (.docx) formatted with standard headings and layout.
-            </p>
-            <button className="primary" onClick={() => handleReviewAction('Generate DOCX')} style={{ width: '100%', marginTop: '12px' }}>
-              Export as Word (.docx)
+  const renderAdmin = () => {
+    return (
+      <div className="admin-layout" style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', borderBottom: '1px solid #e2e8f0', paddingBottom: '16px' }}>
+          <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+            <button 
+              className="secondary" 
+              onClick={() => setActivePage('interview')}
+              style={{ padding: '8px 14px', fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0' }}
+            >
+              🧑‍💼 Switch to BA Mode
             </button>
+            <div>
+              <p className="eyebrow" style={{ margin: '0' }}>Administration</p>
+              <h2 style={{ margin: '4px 0 0 0' }}>System Control Panel</h2>
+            </div>
           </div>
-
-          <div className="export-option-card" style={{ border: '1px solid #e7ebf2', padding: '24px', borderRadius: '16px', backgroundColor: '#fcfdff', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', height: '36px' }}>
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#e11d48" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M9 15h1a1.5 1.5 0 0 0 0-3H9v4z"></path><path d="M12 12v4"></path><path d="M12 12a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2"></path></svg>
-            </span>
-            <h3 style={{ margin: '0' }}>Adobe PDF Document</h3>
-            <p className="muted" style={{ fontSize: '0.9rem', margin: '0', flex: 1 }}>
-              Generate a print-ready, read-only PDF document (.pdf) containing all extracted functional requirements, timeline details, and business outcomes.
-            </p>
-            <button className="primary" onClick={() => handleReviewAction('Generate PDF')} style={{ width: '100%', marginTop: '12px' }}>
-              Export as PDF (.pdf)
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <button 
+              className={adminTab === 'users' ? 'primary' : 'secondary'} 
+              onClick={() => setAdminTab('users')}
+              style={{ cursor: 'pointer' }}
+            >
+              👤 Users Management
+            </button>
+            <button 
+              className={adminTab === 'logs' ? 'primary' : 'secondary'} 
+              onClick={() => setAdminTab('logs')}
+              style={{ cursor: 'pointer' }}
+            >
+              📜 Audit Logs
             </button>
           </div>
         </div>
-      </section>
-    </div>
-  )
+
+        {adminTab === 'users' ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '3fr 1.5fr', gap: '24px' }}>
+            {/* Users List */}
+            <section className="panel" style={{ padding: '24px' }}>
+              <h3>Users under Administration</h3>
+              <div style={{ overflowX: 'auto', marginTop: '16px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid #e2e8f0', color: '#475569', fontSize: '0.9rem' }}>
+                      <th style={{ padding: '12px' }}>ID</th>
+                      <th style={{ padding: '12px' }}>Name</th>
+                      <th style={{ padding: '12px' }}>Email</th>
+                      <th style={{ padding: '12px' }}>Role</th>
+                      <th style={{ padding: '12px' }}>Joined</th>
+                      <th style={{ padding: '12px' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usersList.map((u) => (
+                      <tr key={u.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '0.9rem' }}>
+                        <td style={{ padding: '12px', fontWeight: 'bold' }}>{u.id}</td>
+                        <td style={{ padding: '12px' }}>{u.name}</td>
+                        <td style={{ padding: '12px', color: '#475569' }}>{u.email}</td>
+                        <td style={{ padding: '12px' }}>
+                          <span style={{
+                            background: u.role === 'ADMIN' ? '#fee2e2' : u.role === 'BUSINESS_ANALYST' ? '#dbeafe' : u.role === 'REVIEWER' ? '#fef3c7' : '#f1f5f9',
+                            color: u.role === 'ADMIN' ? '#991b1b' : u.role === 'BUSINESS_ANALYST' ? '#1e40af' : u.role === 'REVIEWER' ? '#92400e' : '#475569',
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            fontSize: '0.75rem',
+                            fontWeight: '700'
+                          }}>
+                            {u.role}
+                          </span>
+                        </td>
+                        <td style={{ padding: '12px', color: '#64748b' }}>
+                          {u.created_at ? new Date(u.created_at).toLocaleDateString() : 'N/A'}
+                        </td>
+                        <td style={{ padding: '12px' }}>
+                          {u.id === currentUser?.id ? (
+                            <span style={{ fontSize: '0.85rem', color: '#64748b', fontStyle: 'italic' }}>Active Admin (Self)</span>
+                          ) : (
+                            <select 
+                              value={u.role} 
+                              onChange={(e) => handleUpdateUserRole(u.id, e.target.value)}
+                              style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem', cursor: 'pointer' }}
+                            >
+                              <option value="ADMIN">ADMIN</option>
+                              <option value="BUSINESS_ANALYST">BUSINESS_ANALYST</option>
+                              <option value="REVIEWER">REVIEWER</option>
+                              <option value="CLIENT">CLIENT</option>
+                            </select>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            {/* Add User Form */}
+            <section className="panel" style={{ padding: '24px', height: 'fit-content' }}>
+              <h3 style={{ marginBottom: '16px' }}>Add User</h3>
+              <form onSubmit={handleCreateUserByAdmin} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', fontWeight: '600' }}>
+                  Full Name
+                  <input 
+                    type="text" 
+                    value={adminNewName}
+                    onChange={(e) => setAdminNewName(e.target.value)}
+                    placeholder="Enter full name"
+                    required
+                    style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', fontWeight: '600' }}>
+                  Email Address
+                  <input 
+                    type="email" 
+                    value={adminNewEmail}
+                    onChange={(e) => setAdminNewEmail(e.target.value)}
+                    placeholder="name@example.com"
+                    required
+                    style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', fontWeight: '600' }}>
+                  Password
+                  <input 
+                    type="password" 
+                    value={adminNewPassword}
+                    onChange={(e) => setAdminNewPassword(e.target.value)}
+                    placeholder="••••••••"
+                    required
+                    style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', fontWeight: '600' }}>
+                  System Role
+                  <select
+                    value={adminNewRole}
+                    onChange={(e) => setAdminNewRole(e.target.value as UserRole)}
+                    style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', cursor: 'pointer' }}
+                  >
+                    <option value="BUSINESS_ANALYST">BUSINESS_ANALYST</option>
+                    <option value="ADMIN">ADMIN</option>
+                    <option value="REVIEWER">REVIEWER</option>
+                    <option value="CLIENT">CLIENT</option>
+                  </select>
+                </label>
+                <button type="submit" className="primary" style={{ marginTop: '10px', width: '100%' }}>
+                  Create Account ➕
+                </button>
+              </form>
+            </section>
+          </div>
+        ) : (
+          <section className="panel" style={{ padding: '24px' }}>
+            <h3>System Audit Feed</h3>
+            <div style={{ overflowX: 'auto', marginTop: '16px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid #e2e8f0', color: '#475569', fontSize: '0.9rem' }}>
+                    <th style={{ padding: '12px' }}>Timestamp</th>
+                    <th style={{ padding: '12px' }}>User Email</th>
+                    <th style={{ padding: '12px' }}>Action</th>
+                    <th style={{ padding: '12px' }}>Project ID</th>
+                    <th style={{ padding: '12px' }}>Metadata / Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logsList.map((l) => (
+                    <tr key={l.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '0.85rem' }}>
+                      <td style={{ padding: '12px', color: '#64748b', whiteSpace: 'nowrap' }}>
+                        {new Date(l.timestamp).toLocaleString()}
+                      </td>
+                      <td style={{ padding: '12px', fontWeight: '600' }}>{l.user_email}</td>
+                      <td style={{ padding: '12px' }}>
+                        <span style={{
+                          background: l.action === 'permission denied' ? '#fee2e2' : '#e2e8f0',
+                          color: l.action === 'permission denied' ? '#ef4444' : '#1e293b',
+                          padding: '4px 8px',
+                          borderRadius: '6px',
+                          fontWeight: '600',
+                          fontSize: '0.75rem'
+                        }}>
+                          {l.action}
+                        </span>
+                      </td>
+                      <td style={{ padding: '12px', color: '#475569' }}>{l.project_id || 'N/A'}</td>
+                      <td style={{ padding: '12px', fontFamily: 'monospace', color: '#475569', fontSize: '0.75rem', maxWidth: '350px', wordBreak: 'break-all' }}>
+                        {l.metadata ? JSON.stringify(l.metadata) : 'None'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+      </div>
+    )
+  }
+
+  // If not authenticated, render Login/Register
+  if (!token || !currentUser) {
+    if (isLoaded) {
+      return renderAuthPage()
+    } else {
+      return (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f4f7fb' }}>
+          <div style={{ fontSize: '1.2rem', color: '#3755d4', fontWeight: 'bold' }}>Loading Workshop Console...</div>
+        </div>
+      )
+    }
+  }
 
   return (
     <div className="app-shell">
       {activePage !== 'interview' && (
-        <header className="header">
+        <header className="header" style={{ borderBottom: '1px solid #dce5f0' }}>
           <div>
-            <p className="eyebrow">BA Agent</p>
-            <h2>Business Analyst AI</h2>
+            <p className="eyebrow" style={{ margin: '0' }}>BA Agent Workspace</p>
+            <h2 style={{ margin: '4px 0 0 0' }}>Business Analyst Workshop</h2>
           </div>
-          <div className="profile-pill">Profile</div>
+          <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
+            {currentUser?.role === 'ADMIN' && (
+              <button 
+                className="secondary" 
+                onClick={() => setActivePage('admin')} 
+                style={{ fontSize: '0.85rem', padding: '8px 16px', background: '#eff6ff', color: '#1e40af', border: '1px solid #bfdbfe', cursor: 'pointer' }}
+              >
+                🛡️ Admin Panel
+              </button>
+            )}
+            <div className="profile-pill" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', borderRadius: '12px', background: '#f8fafc', border: '1px solid #cbd5e1', padding: '6px 14px' }}>
+              <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#1e293b' }}>{currentUser?.name}</span>
+              <span style={{ fontSize: '0.7rem', fontWeight: '700', color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                {currentUser && getRoleLabel(currentUser.role)}
+              </span>
+            </div>
+            <button className="secondary" onClick={handleLogout} style={{ fontSize: '0.85rem', padding: '8px 16px', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fecaca', cursor: 'pointer' }}>
+              Sign Out 🚪
+            </button>
+          </div>
         </header>
       )}
 
       <div className="workspace">
         <main className="main-content">
           {activePage === 'dashboard' && renderDashboard()}
-          {activePage === 'new-project' && renderNewProject()}
           {activePage === 'interview' && renderInterview()}
           {activePage === 'review' && renderReview()}
           {activePage === 'export' && renderExport()}
+          {activePage === 'admin' && renderAdmin()}
         </main>
       </div>
     </div>
