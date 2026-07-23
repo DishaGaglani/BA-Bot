@@ -5,6 +5,10 @@ import UserManagement, { User } from './UserManagement';
 import RolesPermissions from './RolesPermissions';
 import ProjectManagement from './ProjectManagement';
 import ProjectDetails from './ProjectDetails';
+import ConversationsPanel from './ConversationsPanel';
+import DocumentsPanel from './DocumentsPanel';
+import AnalyticsPanel from './AnalyticsPanel';
+import SettingsPanel from './SettingsPanel';
 import './Admin.css';
 
 interface AdminPortalProps {
@@ -298,8 +302,24 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
         )
       )}
 
+      {activeTab === 'conversations' && (
+        <ConversationsPanel token={token} />
+      )}
+
+      {activeTab === 'documents' && (
+        <DocumentsPanel token={token} />
+      )}
+
+      {activeTab === 'analytics' && (
+        <AnalyticsPanel token={token} />
+      )}
+
+      {activeTab === 'settings' && (
+        <SettingsPanel token={token} />
+      )}
+
       {/* Placeholder Tabs */}
-      {!['dashboard', 'users', 'roles', 'projects'].includes(activeTab) && (
+      {!['dashboard', 'users', 'roles', 'projects', 'conversations', 'documents', 'analytics', 'settings'].includes(activeTab) && (
         <div style={{ padding: '24px', backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0', minHeight: '300px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
           <div style={{ fontSize: '3rem', marginBottom: '16px' }}>🚧</div>
           <h2 style={{ fontSize: '1.25rem', fontWeight: '700', color: '#0f172a', margin: '0 0 8px 0' }}>Under Construction</h2>

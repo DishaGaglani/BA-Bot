@@ -876,3 +876,158 @@ def get_admin_project_details(
         "conversations": conversations,
         "activity": activity
     }
+
+class SystemSettingsUpdate(BaseModel):
+    workspaceName: str
+    aiModel: str
+    tokenTimeout: int
+    allowRegistration: bool
+
+@router.get("/conversations")
+def list_admin_conversations(
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    db: Session = Depends(get_db)
+):
+    from sqlalchemy import func
+    from models import Message
+    # Query project name, session_id, message count, and last active timestamp
+    results = db.query(
+        Project.id.label("project_id"),
+        Project.name.label("project_name"),
+        Project.session_id.label("session_id"),
+        func.count(Message.id).label("message_count"),
+        func.max(Message.created_at).label("last_active")
+    ).join(Message, Message.project_id == Project.id).group_by(Project.id).all()
+    
+    return [{
+        "project_id": r.project_id,
+        "project_name": r.project_name,
+        "session_id": r.session_id,
+        "message_count": r.message_count,
+        "last_active": r.last_active.isoformat() if r.last_active else None
+    } for r in results]
+
+@router.delete("/conversations/{project_id}")
+def delete_admin_conversation(
+    project_id: int,
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    db: Session = Depends(get_db)
+):
+    from models import Message
+    # Delete all messages for this project
+    db.query(Message).filter(Message.project_id == project_id).delete()
+    db.commit()
+    
+    from services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="conversation deleted",
+        project_id=project_id,
+        metadata={"deleted_by": current_user.email}
+    )
+    return {"status": "ok", "message": "Conversation history cleared successfully."}
+
+@router.get("/documents")
+def list_admin_documents(
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    db: Session = Depends(get_db)
+):
+    # Query export logs
+    doc_logs = db.query(AuditLog).filter(
+        AuditLog.action.like("%export%")
+    ).order_by(AuditLog.timestamp.desc()).all()
+    
+    result = []
+    for dl in doc_logs:
+        doc_type = "PDF" if "pdf" in dl.action.lower() else "DOCX"
+        project_name = dl.project.name if dl.project else "Unknown Project"
+        result.append({
+            "id": dl.id,
+            "project_id": dl.project_id,
+            "project_name": project_name,
+            "action": dl.action,
+            "format": doc_type,
+            "triggered_by": dl.user.email if dl.user else "System",
+            "timestamp": dl.timestamp.isoformat()
+        })
+    return result
+
+@router.get("/analytics")
+def get_admin_analytics(
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    db: Session = Depends(get_db)
+):
+    from sqlalchemy import func
+    
+    # 1. Users by Role
+    role_stats = db.query(User.role, func.count(User.id)).group_by(User.role).all()
+    roles_data = [{"role": r[0].value, "count": r[1]} for r in role_stats]
+    
+    # 2. Projects trend
+    proj_stats = db.query(
+        func.strftime("%Y-%m-%d", Project.created_at).label("day"),
+        func.count(Project.id)
+    ).group_by("day").order_by("day").all()
+    projects_trend = [{"date": r[0], "count": r[1]} for r in proj_stats]
+    
+    # 3. Top Active Users (most audit logs)
+    top_users = db.query(
+        User.name,
+        User.email,
+        func.count(AuditLog.id).label("log_count")
+    ).join(AuditLog, AuditLog.user_id == User.id).group_by(User.id).order_by(func.count(AuditLog.id).desc()).limit(5).all()
+    
+    active_users_data = [{
+        "name": r.name,
+        "email": r.email,
+        "activity_count": r.log_count
+    } for r in top_users]
+    
+    # 4. Logs summary count by action
+    action_stats = db.query(
+        AuditLog.action,
+        func.count(AuditLog.id)
+    ).group_by(AuditLog.action).order_by(func.count(AuditLog.id).desc()).limit(10).all()
+    actions_data = [{"action": r[0], "count": r[1]} for r in action_stats]
+    
+    return {
+        "rolesDistribution": roles_data,
+        "projectsTrend": projects_trend,
+        "mostActiveUsers": active_users_data,
+        "actionsSummary": actions_data
+    }
+
+SETTINGS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "system_settings.json")
+
+def read_settings() -> dict:
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "workspaceName": "BA Bot Workspace",
+        "aiModel": "Prediction Agent",
+        "tokenTimeout": 3600,
+        "allowRegistration": True
+    }
+
+@router.get("/settings")
+def get_admin_settings(
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN]))
+):
+    return read_settings()
+
+@router.put("/settings")
+def save_admin_settings(
+    payload: SystemSettingsUpdate,
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN]))
+):
+    try:
+        with open(SETTINGS_FILE, "w") as f:
+            json.dump(payload.model_dump(), f, indent=2)
+        return {"status": "ok", "message": "Settings saved successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save settings file: {str(e)}")
