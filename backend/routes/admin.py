@@ -6,7 +6,7 @@ import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from models import User, UserRole, AuditLog, Project, Message, ProjectMember, ProjectMemberRole
+from models import User, UserRole, AuditLog, Project, Message, ProjectMember, ProjectMemberRole, Team, TeamProject
 from dependencies.auth import get_current_user, get_db, require_role
 from services.rbac_service import get_role_permissions_matrix, update_role_permissions_matrix
 
@@ -40,9 +40,7 @@ def get_dashboard_stats(
     ).count()
     
     # 6. Token Usage and Cost
-    # SQLite length gives characters. Assume 1 token ~ 4 characters.
-    total_chars = db.query(func.sum(func.length(Message.text))).scalar() or 0
-    token_usage = total_chars // 4
+    token_usage = db.query(func.sum(Message.token_count)).scalar() or 0
     estimated_cost = token_usage * 0.00002
     
     # 7. Activity Chart Data (last 7 days of AI requests)
@@ -1160,3 +1158,325 @@ def clone_admin_project(
         }
     )
     return {"status": "ok", "message": "Project cloned successfully.", "project_id": cloned_project.id}
+
+class TeamCreate(BaseModel):
+    name: str
+    manager_id: int | None = None
+
+class TeamUpdate(BaseModel):
+    name: str
+    manager_id: int | None = None
+
+class TeamMembersAssign(BaseModel):
+    user_ids: list[int]
+
+class TeamProjectsAssign(BaseModel):
+    project_ids: list[int]
+
+@router.get("/teams")
+def list_admin_teams(
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    db: Session = Depends(get_db)
+):
+    teams = db.query(Team).all()
+    result = []
+    for t in teams:
+        members_count = db.query(User).filter(User.team_id == t.id).count()
+        projects_count = db.query(TeamProject).filter(TeamProject.team_id == t.id).count()
+        manager_name = "None"
+        if t.manager:
+            manager_name = t.manager.name
+        result.append({
+            "id": t.id,
+            "name": t.name,
+            "manager_id": t.manager_id,
+            "manager_name": manager_name,
+            "members_count": members_count,
+            "projects_count": projects_count,
+            "created_at": t.created_at.isoformat()
+        })
+    return result
+
+@router.post("/teams")
+def create_admin_team(
+    payload: TeamCreate,
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    db: Session = Depends(get_db)
+):
+    if payload.manager_id:
+        mgr = db.query(User).filter(User.id == payload.manager_id).first()
+        if not mgr:
+            raise HTTPException(status_code=404, detail="Manager user not found")
+            
+    existing = db.query(Team).filter(Team.name == payload.name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Team name already exists")
+        
+    db_team = Team(
+        name=payload.name,
+        manager_id=payload.manager_id
+    )
+    db.add(db_team)
+    db.commit()
+    db.refresh(db_team)
+    
+    if payload.manager_id:
+        mgr = db.query(User).filter(User.id == payload.manager_id).first()
+        mgr.team_id = db_team.id
+        db.commit()
+        
+    from services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="team created",
+        metadata={"team_id": db_team.id, "team_name": db_team.name}
+    )
+    return {"status": "ok", "message": "Team created successfully.", "team_id": db_team.id}
+
+@router.put("/teams/{team_id}")
+def update_admin_team(
+    team_id: int,
+    payload: TeamUpdate,
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    db: Session = Depends(get_db)
+):
+    team = db.query(Team).filter(Team.id == team_id).first()
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+        
+    if payload.manager_id:
+        mgr = db.query(User).filter(User.id == payload.manager_id).first()
+        if not mgr:
+            raise HTTPException(status_code=404, detail="Manager user not found")
+            
+    existing = db.query(Team).filter(Team.name == payload.name, Team.id != team_id).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Team name already exists")
+        
+    team.name = payload.name
+    team.manager_id = payload.manager_id
+    db.commit()
+    
+    if payload.manager_id:
+        mgr = db.query(User).filter(User.id == payload.manager_id).first()
+        mgr.team_id = team_id
+        db.commit()
+        
+    from services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="team updated",
+        metadata={"team_id": team.id, "team_name": team.name}
+    )
+    return {"status": "ok", "message": "Team updated successfully."}
+
+@router.delete("/teams/{team_id}")
+def delete_admin_team(
+    team_id: int,
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    db: Session = Depends(get_db)
+):
+    team = db.query(Team).filter(Team.id == team_id).first()
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+        
+    db.query(User).filter(User.team_id == team_id).update({User.team_id: None})
+    db.query(TeamProject).filter(TeamProject.team_id == team_id).delete()
+    
+    db.delete(team)
+    db.commit()
+    
+    from services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="team deleted",
+        metadata={"deleted_team_id": team_id}
+    )
+    return {"status": "ok", "message": "Team deleted successfully."}
+
+@router.post("/teams/{team_id}/members")
+def assign_admin_team_members(
+    team_id: int,
+    payload: TeamMembersAssign,
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    db: Session = Depends(get_db)
+):
+    team = db.query(Team).filter(Team.id == team_id).first()
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+        
+    db.query(User).filter(User.team_id == team_id).update({User.team_id: None})
+    
+    for uid in payload.user_ids:
+        usr = db.query(User).filter(User.id == uid).first()
+        if usr:
+            usr.team_id = team_id
+            
+    if team.manager_id:
+        mgr = db.query(User).filter(User.id == team.manager_id).first()
+        if mgr:
+            mgr.team_id = team_id
+            
+    db.commit()
+    
+    from services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="team members assigned",
+        metadata={"team_id": team_id, "user_ids": payload.user_ids}
+    )
+    return {"status": "ok", "message": "Team members updated successfully."}
+
+@router.post("/teams/{team_id}/projects")
+def assign_admin_team_projects(
+    team_id: int,
+    payload: TeamProjectsAssign,
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    db: Session = Depends(get_db)
+):
+    team = db.query(Team).filter(Team.id == team_id).first()
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+        
+    db.query(TeamProject).filter(TeamProject.team_id == team_id).delete()
+    
+    for pid in payload.project_ids:
+        proj = db.query(Project).filter(Project.id == pid).first()
+        if proj:
+            link = TeamProject(team_id=team_id, project_id=pid)
+            db.add(link)
+            
+    db.commit()
+    
+    from services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="team projects assigned",
+        metadata={"team_id": team_id, "project_ids": payload.project_ids}
+    )
+    return {"status": "ok", "message": "Team projects updated successfully."}
+
+@router.get("/teams/{team_id}/analytics")
+def get_admin_team_analytics(
+    team_id: int,
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    db: Session = Depends(get_db)
+):
+    team = db.query(Team).filter(Team.id == team_id).first()
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+        
+    team_members = db.query(User).filter(User.team_id == team_id).all()
+    members_list = [{
+        "id": m.id,
+        "name": m.name,
+        "email": m.email,
+        "role": m.role.value
+    } for m in team_members]
+    
+    team_projects = db.query(TeamProject).filter(TeamProject.team_id == team_id).all()
+    projects_list = []
+    project_ids = []
+    for tp in team_projects:
+        if tp.project:
+            projects_list.append({
+                "id": tp.project.id,
+                "name": tp.project.name,
+                "status": tp.project.status,
+                "department": tp.project.department or "—",
+                "priority": tp.project.priority or "MEDIUM"
+            })
+            project_ids.append(tp.project.id)
+            
+    member_ids = [m.id for m in team_members]
+    messages_count = 0
+    if member_ids and project_ids:
+        messages_count = db.query(Message).filter(Message.project_id.in_(project_ids)).count()
+        
+    activity_count = 0
+    recent_activities = []
+    if member_ids:
+        activity_count = db.query(AuditLog).filter(AuditLog.user_id.in_(member_ids)).count()
+        logs = db.query(AuditLog).filter(
+            AuditLog.user_id.in_(member_ids)
+        ).order_by(AuditLog.timestamp.desc()).limit(20).all()
+        
+        for l in logs:
+            recent_activities.append({
+                "id": l.id,
+                "action": l.action,
+                "user_email": l.user.email if l.user else "System",
+                "timestamp": l.timestamp.isoformat()
+            })
+            
+    return {
+        "teamName": team.name,
+        "managerName": team.manager.name if team.manager else "None",
+        "members": members_list,
+        "projects": projects_list,
+        "messagesCount": messages_count,
+        "activityCount": activity_count,
+        "recentActivity": recent_activities
+    }
+
+class DiscoverySectionUpdate(BaseModel):
+    prompt: str
+    enabled: bool
+    mandatory: bool
+    question_order: int
+    default_value: str | None = None
+    validation_rules: str | None = None
+
+@router.get("/discovery-sections")
+def list_admin_discovery_sections(
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    db: Session = Depends(get_db)
+):
+    sections = db.query(DiscoverySection).order_by(DiscoverySection.question_order.asc()).all()
+    result = []
+    for s in sections:
+        result.append({
+            "id": s.id,
+            "section_key": s.section_key,
+            "section_name": s.section_name,
+            "prompt": s.prompt,
+            "enabled": s.enabled,
+            "mandatory": s.mandatory,
+            "question_order": s.question_order,
+            "default_value": s.default_value or "",
+            "validation_rules": s.validation_rules or ""
+        })
+    return result
+
+@router.put("/discovery-sections/{section_id}")
+def update_admin_discovery_section(
+    section_id: int,
+    payload: DiscoverySectionUpdate,
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    db: Session = Depends(get_db)
+):
+    section = db.query(DiscoverySection).filter(DiscoverySection.id == section_id).first()
+    if not section:
+        raise HTTPException(status_code=404, detail="Discovery section not found")
+        
+    section.prompt = payload.prompt
+    section.enabled = payload.enabled
+    section.mandatory = payload.mandatory
+    section.question_order = payload.question_order
+    section.default_value = payload.default_value
+    section.validation_rules = payload.validation_rules
+    db.commit()
+    
+    from services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="discovery config updated",
+        metadata={"section_key": section.section_key, "question_order": section.question_order}
+    )
+    return {"status": "ok", "message": "Discovery section configuration updated successfully."}

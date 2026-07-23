@@ -35,11 +35,13 @@ class User(Base):
     status = Column(String, default="ACTIVE", nullable=True)
     last_login = Column(DateTime, default=datetime.datetime.utcnow, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    team_id = Column(Integer, ForeignKey("teams.id"), nullable=True)
 
     # Relationships
     owned_projects = relationship("Project", back_populates="owner", cascade="all, delete-orphan")
     memberships = relationship("ProjectMember", back_populates="user", cascade="all, delete-orphan")
     audit_logs = relationship("AuditLog", back_populates="user")
+    team = relationship("Team", back_populates="members", foreign_keys=[team_id])
 
 class Project(Base):
     __tablename__ = "projects"
@@ -68,6 +70,7 @@ class Project(Base):
     members = relationship("ProjectMember", back_populates="project", cascade="all, delete-orphan")
     audit_logs = relationship("AuditLog", back_populates="project", cascade="all, delete-orphan")
     messages = relationship("Message", back_populates="project", cascade="all, delete-orphan")
+    teams = relationship("TeamProject", back_populates="project", cascade="all, delete-orphan")
 
 class ProjectMember(Base):
     __tablename__ = "project_members"
@@ -103,7 +106,45 @@ class Message(Base):
     role = Column(String, nullable=False)  # 'user' or 'ai'
     text = Column(Text, nullable=False)
     is_archived = Column(Boolean, default=False, nullable=False)
+    token_count = Column(Integer, default=0, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
 
     # Relationships
     project = relationship("Project", back_populates="messages")
+
+class Team(Base):
+    __tablename__ = "teams"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True, nullable=False)
+    manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+
+    # Relationships
+    manager = relationship("User", foreign_keys=[manager_id])
+    members = relationship("User", back_populates="team", foreign_keys="User.team_id")
+    projects = relationship("TeamProject", back_populates="team", cascade="all, delete-orphan")
+
+class TeamProject(Base):
+    __tablename__ = "team_projects"
+
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True)
+
+    # Relationships
+    team = relationship("Team", back_populates="projects")
+    project = relationship("Project", back_populates="teams")
+
+class DiscoverySection(Base):
+    __tablename__ = "discovery_sections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    section_key = Column(String, unique=True, index=True, nullable=False)
+    section_name = Column(String, nullable=False)
+    prompt = Column(Text, nullable=False)
+    enabled = Column(Boolean, default=True, nullable=False)
+    mandatory = Column(Boolean, default=True, nullable=False)
+    question_order = Column(Integer, default=1, nullable=False)
+    default_value = Column(Text, nullable=True)
+    validation_rules = Column(Text, nullable=True)

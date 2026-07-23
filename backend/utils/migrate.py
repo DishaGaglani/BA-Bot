@@ -6,7 +6,7 @@ import os
 # Set up paths so we can import from database and models
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database import engine, SessionLocal
-from models import Base, User, UserRole, Project, ProjectMember, ProjectMemberRole
+from models import Base, User, UserRole, Project, ProjectMember, ProjectMemberRole, DiscoverySection
 from auth.jwt import hash_password
 
 def get_or_create_user(db, name, email, password, role):
@@ -158,7 +158,9 @@ def run_migration():
                 ("projects", "locked", "BOOLEAN DEFAULT 0"),
                 ("users", "department", "TEXT DEFAULT 'IT'"),
                 ("users", "status", "TEXT DEFAULT 'ACTIVE'"),
-                ("users", "last_login", "TEXT")
+                ("users", "last_login", "TEXT"),
+                ("users", "team_id", "INTEGER"),
+                ("messages", "token_count", "INTEGER DEFAULT 0")
             ]:
                 try:
                     cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_def};")
@@ -190,6 +192,118 @@ def run_migration():
         for name, email, password, role in users_to_seed:
             get_or_create_user(db, name, email, password, role)
         print("Default system users check complete.")
+
+        # Seed Discovery Sections
+        print("Ensuring default discovery sections exist...")
+        sections_to_seed = [
+            {
+                "section_key": "project_name",
+                "section_name": "Project Information",
+                "prompt": "Introduce yourself as the discovery AI and ask the user to provide the Project Name, Sponsor Name, Department, and Business Unit. Try to elicit all of these details conversationally.",
+                "enabled": True,
+                "mandatory": True,
+                "question_order": 1,
+                "default_value": "My Project",
+                "validation_rules": "Should contain a name and description."
+            },
+            {
+                "section_key": "industry",
+                "section_name": "Business Objectives",
+                "prompt": "Elicit details about the business domain, industry, and the core problems or objectives this project aims to solve.",
+                "enabled": True,
+                "mandatory": True,
+                "question_order": 2,
+                "default_value": "IT Automation",
+                "validation_rules": "Explain the target business goal."
+            },
+            {
+                "section_key": "stakeholders",
+                "section_name": "Stakeholders",
+                "prompt": "Ask the user to identify key stakeholders, target users, sponsors, and project managers who will interact with the system.",
+                "enabled": True,
+                "mandatory": True,
+                "question_order": 3,
+                "default_value": "Internal Employees",
+                "validation_rules": "List at least one stakeholder group."
+            },
+            {
+                "section_key": "functional_requirements",
+                "section_name": "Functional Requirements",
+                "prompt": "Ask the user to describe the primary features, workflows, capabilities, and functional requirements of the system.",
+                "enabled": True,
+                "mandatory": True,
+                "question_order": 4,
+                "default_value": "User Login, Reports Generation",
+                "validation_rules": "Minimum 20 characters."
+            },
+            {
+                "section_key": "non_functional_requirements",
+                "section_name": "Non Functional Requirements",
+                "prompt": "Discuss non-functional aspects: performance expectations, data security guidelines, availability, or platform support.",
+                "enabled": True,
+                "mandatory": True,
+                "question_order": 5,
+                "default_value": "Secure login, fast load time < 2s",
+                "validation_rules": "Discuss speed or security constraints."
+            },
+            {
+                "section_key": "integrations",
+                "section_name": "Risks",
+                "prompt": "Elicit potential deployment threats, security vulnerabilities, or dependencies that represent a risk to the project.",
+                "enabled": True,
+                "mandatory": True,
+                "question_order": 6,
+                "default_value": "Security compliance audits",
+                "validation_rules": "List at least one potential project block risk."
+            },
+            {
+                "section_key": "timeline",
+                "section_name": "Assumptions",
+                "prompt": "Identify any core assumptions about technical resources, vendor dependencies, or resource availability.",
+                "enabled": True,
+                "mandatory": True,
+                "question_order": 7,
+                "default_value": "Resources will be allocated on time",
+                "validation_rules": "State resource or stack assumptions."
+            },
+            {
+                "section_key": "budget",
+                "section_name": "Constraints",
+                "prompt": "Elicit constraints: budget limitations, hard timelines, compliance regulations, or legacy system barriers.",
+                "enabled": True,
+                "mandatory": True,
+                "question_order": 8,
+                "default_value": "Timeline limit 6 months",
+                "validation_rules": "List budget or timeline constraint."
+            },
+            {
+                "section_key": "constraints",
+                "section_name": "Acceptance Criteria",
+                "prompt": "Discuss project criteria required for business analyst sign-off and user acceptance testing.",
+                "enabled": True,
+                "mandatory": True,
+                "question_order": 9,
+                "default_value": "All tests pass successfully",
+                "validation_rules": "Detail validation approval workflow."
+            }
+        ]
+        
+        for sec in sections_to_seed:
+            existing = db.query(DiscoverySection).filter(DiscoverySection.section_key == sec["section_key"]).first()
+            if not existing:
+                new_sec = DiscoverySection(
+                    section_key=sec["section_key"],
+                    section_name=sec["section_name"],
+                    prompt=sec["prompt"],
+                    enabled=sec["enabled"],
+                    mandatory=sec["mandatory"],
+                    question_order=sec["question_order"],
+                    default_value=sec["default_value"],
+                    validation_rules=sec["validation_rules"]
+                )
+                db.add(new_sec)
+        db.commit()
+        print("Ensuring default discovery sections complete.")
 
     except Exception as e:
         print(f"Error during migration: {str(e)}")

@@ -11,20 +11,24 @@ PREDICTION_URL = "https://forjinn.com/api/v1/prediction/249fc96e-5b62-4208-8787-
 
 def check_and_summarize(db: Session, project: Project) -> bool:
     """
-    Check if the active conversation has 15 or more non-archived messages.
-    If so, call Forjinn to merge them into a rolling summary and archive the messages.
+    Check if the active conversation has 10 or more non-archived messages.
+    If so, call Forjinn to merge the older messages (older than the last 5)
+    into the rolling summary and archive them.
     """
     unarchived = get_unarchived_messages(db, project.id)
     
-    # We only summarize if we have 15 or more active messages
-    if len(unarchived) < 15:
+    # We only summarize if we have 10 or more active messages
+    if len(unarchived) < 10:
         return False
         
-    print(f"Triggering rolling summarization for project {project.id} ({len(unarchived)} active messages)...")
+    # We keep the last 5 messages active/raw, and summarize the rest
+    messages_to_summarize = unarchived[:-5]
+    
+    print(f"Triggering rolling summarization for project {project.id} ({len(messages_to_summarize)} older messages)...")
     
     # Format messages for the summarization prompt
     chat_lines = []
-    for msg in unarchived:
+    for msg in messages_to_summarize:
         sender = "User" if msg.role == "user" else "AI"
         chat_lines.append(f"{sender}: {msg.text}")
     chat_text = "\n".join(chat_lines)
@@ -65,12 +69,12 @@ def check_and_summarize(db: Session, project: Project) -> bool:
         # Update project summary in DB
         project.summary = summary_text.strip()
         
-        # Archive the messages that were summarized
-        for msg in unarchived:
+        # Archive only the messages that were summarized
+        for msg in messages_to_summarize:
             msg.is_archived = True
             
         db.commit()
-        print(f"Rolling summarization complete for project {project.id}.")
+        print(f"Rolling summarization complete for project {project.id}. Archived {len(messages_to_summarize)} messages.")
         return True
         
     except Exception as e:

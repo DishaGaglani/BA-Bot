@@ -13,6 +13,7 @@ def save_message(db: Session, project_id: int, role: str, text: str) -> Message:
         role=role,
         text=text,
         is_archived=False,
+        token_count=len(text) // 4,
         created_at=datetime.datetime.utcnow()
     )
     db.add(message)

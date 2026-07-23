@@ -104,14 +104,34 @@ def require_project_access(minimum_role: ProjectMemberRole):
             ProjectMember.user_id == current_user.id
         ).first()
         
-        if not member:
+        user_role = None
+        if member:
+            user_role = member.role
+        else:
+            # Check Team inheritance
+            if current_user.team_id:
+                from models import TeamProject, Team
+                team_project_link = db.query(TeamProject).filter(
+                    TeamProject.project_id == project_id,
+                    TeamProject.team_id == current_user.team_id
+                ).first()
+                
+                if team_project_link:
+                    # Resolve team member role inheritance
+                    team = db.query(Team).filter(Team.id == current_user.team_id).first()
+                    if team and team.manager_id == current_user.id:
+                        user_role = ProjectMemberRole.PROJECT_MANAGER
+                    else:
+                        user_role = ProjectMemberRole.CONTRIBUTOR
+                        
+        if not user_role:
             # Log permission denied
             log_action(
                 db=db,
                 user_id=current_user.id,
                 action="permission denied",
                 project_id=project_id,
-                metadata={"reason": "User is not a member of this project"}
+                metadata={"reason": "User is not a member of this project and has no team permission"}
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -126,14 +146,14 @@ def require_project_access(minimum_role: ProjectMemberRole):
             ProjectMemberRole.VIEWER: 1
         }
         
-        if role_hierarchy[member.role] < role_hierarchy[minimum_role]:
+        if role_hierarchy[user_role] < role_hierarchy[minimum_role]:
             # Log permission denied
             log_action(
                 db=db,
                 user_id=current_user.id,
                 action="permission denied",
                 project_id=project_id,
-                metadata={"reason": f"Required project role {minimum_role.value}, user had {member.role.value}"}
+                metadata={"reason": f"Required project role {minimum_role.value}, user had {user_role.value}"}
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

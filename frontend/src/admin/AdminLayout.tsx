@@ -32,6 +32,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({
   const sidebarItems: SidebarItem[] = [
     { id: 'dashboard', label: 'Telemetry & Dashboard', icon: '📊' },
     { id: 'users', label: 'Access & Identity', icon: '👥' },
+    { id: 'teams', label: 'Teams Management', icon: '🤝' },
     { id: 'projects', label: 'Workspace Directory', icon: '📁' },
     { id: 'conversations', label: 'Dialogue & Specs', icon: '💬' },
     { id: 'settings', label: 'System Config', icon: '⚙️' }

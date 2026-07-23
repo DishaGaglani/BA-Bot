@@ -322,12 +322,24 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
   const getStatusBadgeClass = (stat: string) => {
     switch (stat) {
       case 'APPROVED': return 'badge success';
+      case 'PUBLISHED': return 'badge success';
+      case 'PENDING_REVIEW': return 'badge warning';
       case 'IN_REVIEW': return 'badge warning';
-      case 'REJECTED': return 'badge danger';
       case 'ARCHIVED': return 'badge secondary';
       case 'DRAFT':
       default:
         return 'badge primary';
+    }
+  };
+
+  const getStatusLabel = (stat: string) => {
+    switch (stat) {
+      case 'PENDING_REVIEW': return 'Pending Review';
+      case 'APPROVED': return 'Approved';
+      case 'PUBLISHED': return 'Published';
+      case 'DRAFT': return 'Draft';
+      case 'IN_REVIEW': return 'In Review';
+      default: return stat;
     }
   };
 
@@ -455,7 +467,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
                       <div style={{ color: '#64748b' }}>E: {p.end_date ? p.end_date.substring(0, 10) : '—'}</div>
                     </td>
                     <td>
-                      <span className={getStatusBadgeClass(p.status)}>{p.status}</span>
+                      <span className={getStatusBadgeClass(p.status)}>{getStatusLabel(p.status)}</span>
                     </td>
                     <td>
                       <div style={{ fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>

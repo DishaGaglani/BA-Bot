@@ -37,7 +37,7 @@ interface Requirement {
 interface ProjectData {
   id?: number
   owner_id?: number
-  status?: string // 'DRAFT' | 'IN_REVIEW' | 'APPROVED' | 'REJECTED'
+  status?: string // 'DRAFT' | 'PENDING_REVIEW' | 'APPROVED' | 'PUBLISHED'
   sessionId?: string | null
   pdfGenerated?: boolean
   messages?: Message[]
@@ -1349,8 +1349,8 @@ function App() {
   const getStatusColor = (status: string = 'DRAFT') => {
     switch (status) {
       case 'APPROVED': return '#10b981';
-      case 'IN_REVIEW': return '#f59e0b';
-      case 'REJECTED': return '#ef4444';
+      case 'PENDING_REVIEW': return '#f59e0b';
+      case 'PUBLISHED': return '#6366f1';
       default: return '#64748b';
     }
   }
@@ -1856,8 +1856,8 @@ function App() {
     
     // Status banners
     const isApproved = projectData.status === 'APPROVED'
-    const isInReview = projectData.status === 'IN_REVIEW'
-    const isLocked = isViewer || isApproved || isInReview
+    const isInReview = projectData.status === 'PENDING_REVIEW'
+    const isLocked = isViewer || isApproved || isInReview || projectData.status === 'PUBLISHED'
     
     return (
       <div className="interview-shell">
@@ -2382,7 +2382,7 @@ function App() {
         </div>
 
         {/* Status specific notices */}
-        {projectData.status === 'IN_REVIEW' && (
+        {projectData.status === 'PENDING_REVIEW' && (
           <div style={{ gridColumn: 'span 2', background: '#fffbeb', border: '1px solid #fef3c7', color: '#92400e', padding: '16px', borderRadius: '12px', marginBottom: '20px' }}>
             <strong>⏳ Project Review Pending:</strong> This project requirements checklist has been submitted for review.
           </div>
@@ -2390,6 +2390,11 @@ function App() {
         {projectData.status === 'APPROVED' && (
           <div style={{ gridColumn: 'span 2', background: '#ecfdf5', border: '1px solid #d1fae5', color: '#065f46', padding: '16px', borderRadius: '12px', marginBottom: '20px' }}>
             <strong>✅ Approved requirements:</strong> This requirements documentation is fully approved.
+          </div>
+        )}
+        {projectData.status === 'PUBLISHED' && (
+          <div style={{ gridColumn: 'span 2', background: '#e0e7ff', border: '1px solid #c7d2fe', color: '#3730a3', padding: '16px', borderRadius: '12px', marginBottom: '20px' }}>
+            <strong>🚀 Project Published:</strong> This project requirements workspace has been published to the enterprise directory.
           </div>
         )}
 
@@ -2424,7 +2429,7 @@ function App() {
             </div>
 
             {/* Reviewer decision panel */}
-            {isReviewerOrAdmin && projectData.status === 'IN_REVIEW' && (
+            {isReviewerOrAdmin && projectData.status === 'PENDING_REVIEW' && (
               <div style={{
                 background: '#f8fafc',
                 border: '1px solid #cbd5e1',

@@ -1,6 +1,10 @@
 import sys
 import os
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from database import SessionLocal
+from models import DiscoverySection
+
 def is_field_empty(val) -> bool:
     """Check if a field value in state is empty or unpopulated."""
     if val is None:
@@ -11,24 +15,49 @@ def is_field_empty(val) -> bool:
         return len(val) == 0
     return False
 
-def analyze_gaps(state: dict) -> dict:
+def analyze_gaps(state: dict, db=None) -> dict:
     """
     Deterministically analyze the structured state to identify missing requirements
-    and select the next target interview section.
+    and select the next target interview section based on dynamic database orders and configurations.
     """
-    # Define sections, their checking fields, and display labels
-    sections_map = [
-        {"key": "project_name", "label": "Project Name", "section": "Project Name"},
-        {"key": "industry", "label": "Industry & Business Domain", "section": "Business Domain"},
-        {"key": "stakeholders", "label": "Stakeholders & Key Roles", "section": "Stakeholders"},
-        {"key": "timeline", "label": "Timeline & Key Milestones", "section": "Project Timeline"},
-        {"key": "budget", "label": "Budget & Resources", "section": "Project Budget"},
-        {"key": "functional_requirements", "label": "Functional Requirements & Core Features", "section": "Functional Requirements"},
-        {"key": "non_functional_requirements", "label": "Non-Functional Requirements (Security/Speed)", "section": "Non-Functional Requirements"},
-        {"key": "integrations", "label": "Integrations & Third-Party Systems", "section": "System Integrations"},
-        {"key": "constraints", "label": "Constraints & Business Risks", "section": "Constraints & Risks"}
-    ]
-    
+    close_db = False
+    if db is None:
+        db = SessionLocal()
+        close_db = True
+
+    try:
+        # Load enabled sections from database, ordered by question_order
+        sections_config = db.query(DiscoverySection).filter(DiscoverySection.enabled == True).order_by(DiscoverySection.question_order.asc()).all()
+    except Exception as e:
+        print(f"Warning: Failed to fetch discovery sections from DB: {str(e)}")
+        sections_config = []
+
+    if close_db:
+        db.close()
+
+    # Reconstruct dynamic sections map
+    sections_map = []
+    if sections_config:
+        for sec in sections_config:
+            sections_map.append({
+                "key": sec.section_key,
+                "label": sec.section_name,
+                "section": sec.section_name
+            })
+    else:
+        # Fallback defaults if table is empty or error
+        sections_map = [
+            {"key": "project_name", "label": "Project Name", "section": "Project Name"},
+            {"key": "industry", "label": "Industry & Business Domain", "section": "Business Domain"},
+            {"key": "stakeholders", "label": "Stakeholders & Key Roles", "section": "Stakeholders"},
+            {"key": "timeline", "label": "Timeline & Key Milestones", "section": "Project Timeline"},
+            {"key": "budget", "label": "Budget & Resources", "section": "Project Budget"},
+            {"key": "functional_requirements", "label": "Functional Requirements & Core Features", "section": "Functional Requirements"},
+            {"key": "non_functional_requirements", "label": "Non-Functional Requirements (Security/Speed)", "section": "Non-Functional Requirements"},
+            {"key": "integrations", "label": "Integrations & Third-Party Systems", "section": "System Integrations"},
+            {"key": "constraints", "label": "Constraints & Business Risks", "section": "Constraints & Risks"}
+        ]
+
     missing_fields = []
     completed_fields = []
     current_section = "Project Complete"
@@ -46,8 +75,11 @@ def analyze_gaps(state: dict) -> dict:
             
     # Calculate progress percentage
     total_sections = len(sections_map)
-    completed_count = total_sections - len(missing_fields)
-    progress_percentage = round((completed_count / total_sections) * 100)
+    if total_sections == 0:
+        progress_percentage = 100
+    else:
+        completed_count = total_sections - len(missing_fields)
+        progress_percentage = round((completed_count / total_sections) * 100)
     
     return {
         "missing_fields": missing_fields,

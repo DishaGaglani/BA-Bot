@@ -95,6 +95,46 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
     void fetchDetails();
   }, [projectId, token]);
 
+  const handlePublish = async () => {
+    if (!confirm('Are you sure you want to publish this requirements workspace? This will freeze the state.')) return;
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/publish`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        await fetchDetails();
+      } else {
+        const err = await res.json();
+        alert(err.detail || 'Failed to publish project.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error publishing project.');
+    }
+  };
+
+  const getStatusLabel = (stat: string) => {
+    switch (stat) {
+      case 'PENDING_REVIEW': return 'Pending Review';
+      case 'APPROVED': return 'Approved';
+      case 'PUBLISHED': return 'Published';
+      case 'DRAFT': return 'Draft';
+      default: return stat;
+    }
+  };
+
+  const getStatusBadgeStyle = (stat: string) => {
+    switch (stat) {
+      case 'APPROVED': return { background: '#d1fae5', color: '#065f46' };
+      case 'PUBLISHED': return { background: '#e0e7ff', color: '#3730a3' };
+      case 'PENDING_REVIEW': return { background: '#fef3c7', color: '#92400e' };
+      case 'DRAFT':
+      default:
+        return { background: '#f1f5f9', color: '#475569' };
+    }
+  };
+
   const handleToggleLock = async () => {
     if (!overview) return;
     try {
@@ -233,11 +273,9 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
                 fontSize: '0.8rem',
                 padding: '4px 10px',
                 borderRadius: '9999px',
-                background: overview.status === 'APPROVED' ? '#d1fae5' : '#e0f2fe',
-                color: overview.status === 'APPROVED' ? '#065f46' : '#0369a1',
-                fontWeight: '600'
+                ...getStatusBadgeStyle(overview.status)
               }}>
-                {overview.status}
+                {getStatusLabel(overview.status)}
               </span>
               {overview.locked && (
                 <span style={{
@@ -255,13 +293,22 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
             <p style={{ margin: '8px 0 0 0', color: '#64748b', fontSize: '0.9rem' }}>
               Managed by: <strong>{overview.owner_name}</strong> ({overview.owner_email})
             </p>
-            <button
-              onClick={handleToggleLock}
-              className="admin-btn secondary small"
-              style={{ marginTop: '8px' }}
-            >
-              {overview.locked ? '🔓 Unlock Workspace' : '🔒 Lock Workspace'}
-            </button>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
+              <button
+                onClick={handleToggleLock}
+                className="admin-btn secondary small"
+              >
+                {overview.locked ? '🔓 Unlock Workspace' : '🔒 Lock Workspace'}
+              </button>
+              {overview.status === 'APPROVED' && (
+                <button
+                  onClick={handlePublish}
+                  className="admin-btn primary small"
+                >
+                  🚀 Publish Workspace
+                </button>
+              )}
+            </div>
           </div>
           <div style={{ fontSize: '0.85rem', color: '#64748b', textAlign: 'right' }}>
             <div>Created: <strong>{new Date(overview.created_at).toLocaleDateString()}</strong></div>

@@ -327,7 +327,7 @@ def submit_project(
     if project.locked:
         raise HTTPException(status_code=403, detail="Project is locked and cannot be submitted.")
 
-    project.status = "IN_REVIEW"
+    project.status = "PENDING_REVIEW"
     db.commit()
     
     log_action(
@@ -336,7 +336,7 @@ def submit_project(
         action="project submission",
         project_id=project_id
     )
-    return {"status": "ok", "new_status": "IN_REVIEW"}
+    return {"status": "ok", "new_status": "PENDING_REVIEW"}
 
 @router.post("/{project_id}/review")
 def review_project(
@@ -349,7 +349,7 @@ def review_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
         
-    new_status = "APPROVED" if payload.approved else "REJECTED"
+    new_status = "APPROVED" if payload.approved else "DRAFT"
     project.status = new_status
     db.commit()
     
@@ -362,6 +362,27 @@ def review_project(
         metadata={"feedback": payload.feedback}
     )
     return {"status": "ok", "new_status": new_status}
+
+@router.post("/{project_id}/publish")
+def publish_project(
+    project_id: int,
+    project: Project = Depends(require_project_access(ProjectMemberRole.PROJECT_MANAGER)),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if project.status != "APPROVED":
+        raise HTTPException(status_code=400, detail="Only approved requirements can be published.")
+        
+    project.status = "PUBLISHED"
+    db.commit()
+    
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="project publish",
+        project_id=project_id
+    )
+    return {"status": "ok", "new_status": "PUBLISHED"}
 
 @router.post("/{project_id}/invite")
 def invite_member(
