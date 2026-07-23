@@ -5,6 +5,15 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database import SessionLocal
 from models import DiscoverySection
 
+# --- Predefined Section Dependency Graph ---
+# Key: section_key, Value: List of required parent section_keys that must be populated first
+DEPENDENCY_GRAPH = {
+    "functional_requirements": ["industry"],  # Requires Business Objectives (industry)
+    "non_functional_requirements": ["functional_requirements"],  # Requires Functional Reqs
+    "integrations": ["functional_requirements"],  # Requires Functional Reqs
+    "constraints": ["timeline", "budget"]  # Requires Timeline & Budget
+}
+
 def is_field_empty(val) -> bool:
     """Check if a field value in state is empty or unpopulated."""
     if val is None:
@@ -18,7 +27,7 @@ def is_field_empty(val) -> bool:
 def analyze_gaps(state: dict, db=None) -> dict:
     """
     Deterministically analyze the structured state to identify missing requirements
-    and select the next target interview section based on dynamic database orders and configurations.
+    and select the next target interview section based on dynamic database orders and dependencies.
     """
     close_db = False
     if db is None:
@@ -62,16 +71,42 @@ def analyze_gaps(state: dict, db=None) -> dict:
     completed_fields = []
     current_section = "Project Complete"
     
-    found_focus = False
+    # Track completed keys for dependency verification
+    completed_keys = set()
     for sec in sections_map:
         val = state.get(sec["key"])
-        if is_field_empty(val):
-            missing_fields.append(sec["label"])
-            if not found_focus:
-                current_section = sec["section"]
-                found_focus = True
-        else:
+        if not is_field_empty(val):
+            completed_keys.add(sec["key"])
             completed_fields.append(sec["label"])
+        else:
+            missing_fields.append(sec["label"])
+
+    # Determine focus section considering Dependency Graph & Priority (question_order)
+    found_focus = False
+    for sec in sections_map:
+        # If already completed, skip questioning
+        if sec["key"] in completed_keys:
+            continue
+            
+        # Check dependencies
+        deps = DEPENDENCY_GRAPH.get(sec["key"], [])
+        deps_met = True
+        for dep in deps:
+            if dep not in completed_keys:
+                deps_met = False
+                break
+                
+        # If pre-requisites are met, target this section
+        if deps_met and not found_focus:
+            current_section = sec["section"]
+            found_focus = True
+
+    # Fallback to first unpopulated section if dependency cycles or blocks occur
+    if not found_focus and missing_fields:
+        for sec in sections_map:
+            if sec["key"] not in completed_keys:
+                current_section = sec["section"]
+                break
             
     # Calculate progress percentage
     total_sections = len(sections_map)

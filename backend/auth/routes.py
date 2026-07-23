@@ -3,6 +3,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 import sys
 import os
+import json
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database import SessionLocal
@@ -39,6 +40,22 @@ class LoginResponse(BaseModel):
 
 @router.post("/register", response_model=UserResponse)
 def register(payload: UserRegisterRequest, db: Session = Depends(get_db)):
+    # Check if self-registration is enabled in system settings
+    settings_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "system_settings.json")
+    if os.path.exists(settings_path):
+        try:
+            with open(settings_path, "r") as f:
+                cfg = json.load(f)
+                if not cfg.get("allowRegistration", True):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Self-registration is currently disabled by the administrator."
+                    )
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
     # Check if user already exists
     existing_user = db.query(User).filter(User.email == payload.email).first()
     if existing_user:

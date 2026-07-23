@@ -50,8 +50,8 @@ def check_and_summarize(db: Session, project: Project) -> bool:
     }
     
     try:
-        response = requests.post(PREDICTION_URL, json=payload, timeout=90, verify=False)
-        response.raise_for_status()
+        from utils.prod_ready import request_with_retry
+        response = request_with_retry("POST", PREDICTION_URL, json=payload, timeout=90, verify=False)
         res_data = response.json()
         
         summary_text = res_data.get("text")

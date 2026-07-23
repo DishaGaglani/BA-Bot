@@ -269,8 +269,8 @@ def export_project(
     }
         
     try:
-        response = requests.post(PREDICTION_URL, json=payload, timeout=180, verify=False)
-        response.raise_for_status()
+        from utils.prod_ready import request_with_retry
+        response = request_with_retry("POST", PREDICTION_URL, json=payload, timeout=180, verify=False)
         res_data = response.json()
         
         document_text = res_data.get("text")

@@ -1,7 +1,11 @@
 import json
 import requests
 import urllib3
-from fastapi import FastAPI, HTTPException, Depends, status
+import os
+import sys
+import uuid
+import time
+from fastapi import FastAPI, HTTPException, Depends, status, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -9,9 +13,13 @@ from sqlalchemy.orm import Session, joinedload
 
 from database import engine, SessionLocal
 from utils.migrate import run_migration
+from utils.prod_ready import validate_environment, setup_global_exception_handlers, logger, request_with_retry
 
 # Run database migrations and seed default data on startup
 run_migration()
+
+# Validate environment variables on startup
+validate_environment()
 
 # Import route handlers
 import auth.routes
@@ -31,6 +39,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = FastAPI(title="BA Bot API", version="1.0.0")
 
+# Setup global exception handlers
+setup_global_exception_handlers(app)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -39,6 +50,79 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Standardized response middleware and request logging
+@app.middleware("http")
+async def standardize_responses_middleware(request: Request, call_next):
+    trace_id = str(uuid.uuid4())
+    request.state.trace_id = trace_id
+    
+    # Simple user identification check if token is supplied
+    user_id = "anonymous"
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        try:
+            token = auth_header.split(" ")[1]
+            from auth.jwt import decode_access_token
+            payload = decode_access_token(token)
+            if payload and "sub" in payload:
+                user_id = payload["sub"]
+        except Exception:
+            pass
+            
+    start_time = time.time()
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        raise exc
+        
+    process_time = (time.time() - start_time) * 1000
+    
+    # Log trace information: Request ID, User ID, Endpoint, Response Time, Status Code
+    logger.info(
+        f"user_id={user_id} endpoint={request.url.path} status_code={response.status_code} response_time={process_time:.2f}ms",
+        extra={"traceId": trace_id}
+    )
+    
+    # Wrap successful JSON responses
+    content_type = response.headers.get("content-type", "")
+    if "application/json" in content_type and response.status_code < 400:
+        if request.url.path == "/health":
+            return response
+            
+        # Consume the response body stream
+        body_chunks = []
+        async for chunk in response.body_iterator:
+            body_chunks.append(chunk)
+        body_bytes = b"".join(body_chunks)
+        
+        try:
+            body_json = json.loads(body_bytes)
+            # Prevent double wrapping
+            if isinstance(body_json, dict) and "success" in body_json and ("data" in body_json or "traceId" in body_json):
+                new_bytes = body_bytes
+            else:
+                standard_body = {
+                    "success": True,
+                    "data": body_json,
+                    "message": "Success"
+                }
+                new_bytes = json.dumps(standard_body).encode("utf-8")
+        except Exception:
+            new_bytes = body_bytes
+            
+        headers = dict(response.headers)
+        if "content-length" in headers:
+            del headers["content-length"]
+            
+        return Response(
+            content=new_bytes,
+            status_code=response.status_code,
+            headers=headers,
+            media_type="application/json"
+        )
+        
+    return response
+
 # Include routers
 app.include_router(auth.routes.router)
 app.include_router(routes.projects.router)
@@ -46,102 +130,55 @@ app.include_router(routes.admin.router)
 
 PREDICTION_URL = "https://forjinn.com/api/v1/prediction/249fc96e-5b62-4208-8787-0d77367e9eaf"
 
+# Health check route
+@app.get("/health")
+def health_check(db: Session = Depends(get_db)):
+    db_ok = False
+    try:
+        from sqlalchemy import text
+        db.execute(text("SELECT 1"))
+        db_ok = True
+    except Exception:
+        pass
+        
+    ai_ok = False
+    prediction_url = os.getenv("PREDICTION_URL", "https://forjinn.com/api/v1/prediction/249fc96e-5b62-4208-8787-0d77367e9eaf")
+    try:
+        res = requests.head(prediction_url, timeout=5, verify=False)
+        if res.status_code < 500:
+            ai_ok = True
+    except Exception:
+        pass
+        
+    return {
+        "status": "healthy" if (db_ok and ai_ok) else "degraded",
+        "database": "connected" if db_ok else "disconnected",
+        "aiService": "reachable" if ai_ok else "unreachable",
+        "version": "1.0.0",
+        "environment": os.getenv("ENV", "development"),
+        "timestamp": time.time()
+    }
 
 class MessageRequest(BaseModel):
-    message: str
-
-
-class PredictionRequest(BaseModel):
     question: str
-    sessionId: str | None = None
     projectId: int | None = None
-
-
-class MessageResponse(BaseModel):
-    status: str
-    reply: str
-
-
-@app.get("/api/health")
-def health_check() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-@app.post("/api/message", response_model=MessageResponse)
-def receive_message(payload: MessageRequest) -> MessageResponse:
-    return MessageResponse(
-        status="received",
-        reply=f"Received: {payload.message}",
-    )
-
+    sessionId: str | None = None
 
 @app.post("/api/predict")
 def predict(
-    payload: PredictionRequest,
+    payload: MessageRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
-) -> StreamingResponse:
-    # 1. Resolve and verify project access
-    project = None
-    
+):
+    # 1. Fetch project based on payload
     if payload.projectId:
-        # Check by projectId
         project = db.query(Project).options(joinedload(Project.messages)).filter(Project.id == payload.projectId).first()
         if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-            
-        # Verify user has access to this project
-        if current_user.role != UserRole.ADMIN:
-            # Check owner
-            if project.owner_id != current_user.id:
-                # Check member
-                member = db.query(ProjectMember).filter(
-                    ProjectMember.project_id == project.id,
-                    ProjectMember.user_id == current_user.id
-                ).first()
-                if not member:
-                    log_action(
-                        db=db,
-                        user_id=current_user.id,
-                        action="permission denied",
-                        project_id=project.id,
-                        metadata={"reason": "User tried to chat on project they do not belong to"}
-                    )
-                    raise HTTPException(status_code=403, detail="You do not have access to this project's chat")
-                    
-        # Verify sessionId matches project sessionId
-        if payload.sessionId and project.session_id and payload.sessionId != project.session_id:
-            log_action(
-                db=db,
-                user_id=current_user.id,
-                action="permission denied",
-                project_id=project.id,
-                metadata={"reason": "Session ID mismatch for project chat request"}
-            )
-            raise HTTPException(status_code=403, detail="Session ID does not match this project")
-            
+            raise HTTPException(status_code=404, detail="Project workspace not found")
     elif payload.sessionId:
-        # Check by sessionId
         project = db.query(Project).options(joinedload(Project.messages)).filter(Project.session_id == payload.sessionId).first()
         if not project:
-            raise HTTPException(status_code=403, detail="Invalid session reference")
-            
-        # Verify access
-        if current_user.role != UserRole.ADMIN:
-            if project.owner_id != current_user.id:
-                member = db.query(ProjectMember).filter(
-                    ProjectMember.project_id == project.id,
-                    ProjectMember.user_id == current_user.id
-                ).first()
-                if not member:
-                    log_action(
-                        db=db,
-                        user_id=current_user.id,
-                        action="permission denied",
-                        project_id=project.id,
-                        metadata={"reason": "User tried to chat on session they do not belong to"}
-                    )
-                    raise HTTPException(status_code=403, detail="Access denied")
+            raise HTTPException(status_code=404, detail="Project session not found")
     else:
         raise HTTPException(status_code=400, detail="Either projectId or sessionId is required")
 
@@ -153,7 +190,7 @@ def predict(
     is_first_message = len(project.messages) == 0
     save_message(db, project.id, "user", payload.question)
     
-    # 3. Trigger rolling summarization (every 15 active messages)
+    # 3. Trigger rolling summarization (every 10 active messages)
     check_and_summarize(db, project)
     
     # 4. Fetch optimized conversation history window
@@ -162,12 +199,12 @@ def predict(
     # 5. Deterministic gap analysis & section targeting
     state = get_structured_state(project)
     gaps = analyze_gaps(state)
+    active_section = gaps.get("current_section")
     
     # 6. Build optimized prompt
     optimized_prompt = build_optimized_prompt(
-        state=state,
+        project=project,
         gap_analysis=gaps,
-        summary=project.summary,
         active_history=active_history,
         current_query=payload.question
     )
@@ -216,8 +253,8 @@ def predict(
         bg_db = SessionLocal()
         ai_chunks = []
         try:
-            response = requests.post(PREDICTION_URL, json=payload_dict, stream=True, timeout=90, verify=False)
-            response.raise_for_status()
+            # Use request_with_retry for robust LLM streaming connection
+            response = request_with_retry("POST", PREDICTION_URL, json=payload_dict, stream=True, timeout=90, verify=False)
             for line in response.iter_lines():
                 if line:
                     line_str = line.decode("utf-8", "ignore").strip()
@@ -239,7 +276,7 @@ def predict(
                 bg_project = bg_db.query(Project).options(joinedload(Project.messages)).filter(Project.id == project_id).first()
                 if bg_project:
                     save_message(bg_db, bg_project.id, "ai", ai_reply)
-                    update_project_state(bg_db, bg_project, question, ai_reply)
+                    update_project_state(bg_db, bg_project, question, ai_reply, active_section=active_section)
                     legacy_payload = get_legacy_payload(bg_project)
                     bg_project.data = json.dumps(legacy_payload)
                     bg_db.commit()

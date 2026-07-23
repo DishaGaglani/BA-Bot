@@ -37,12 +37,11 @@ def build_optimized_prompt(
 ) -> str:
     """
     Construct a token-minimized prompt detailing only the active section
-    and active history, preventing context duplication.
+    and limiting conversation history to a maximum of the last 2 turns.
     """
     completed = gap_analysis.get("completed_fields", [])
     current_section = gap_analysis.get("current_section", "Project Complete")
     
-    # 1. State section formatting: list completed sections by name ONLY (saving tokens)
     state_context_lines = []
     state_context_lines.append("--- WORKSHOP REQUIREMENTS STATUS ---")
     
@@ -54,16 +53,15 @@ def build_optimized_prompt(
     state_context_lines.append(f"\nActive Focus Section: {current_section}")
     state_context_lines.append("Current Focus Details:")
     
-    # Only list the active/focused key values to keep token usage minimal
     focus_keys_map = {
         "Project Information": ["project_name", "department", "sponsor", "business_unit"],
-        "Business Objectives": ["industry", "business_problem"],
-        "Stakeholders": ["stakeholders", "sponsor"],
-        "Functional Requirements": ["functional_requirements", "business_goals"],
-        "Non Functional Requirements": ["non_functional_requirements", "constraints"],
-        "Risks": ["integrations"],
-        "Assumptions": ["timeline"],
-        "Constraints": ["budget"],
+        "Business Objectives": ["industry", "business_requirements"],
+        "Stakeholders": ["stakeholders", "sponsor", "user_roles"],
+        "Functional Requirements": ["functional_requirements"],
+        "Non Functional Requirements": ["non_functional_requirements"],
+        "Risks": ["risks"],
+        "Assumptions": ["assumptions"],
+        "Constraints": ["constraints", "budget"],
         "Acceptance Criteria": ["constraints"]
     }
     
@@ -94,26 +92,36 @@ def build_optimized_prompt(
     finally:
         db.close()
         
-    # 2. Format running summary if present
     summary_context = ""
     if summary:
         summary_context = f"\n--- RUNNING INTERVIEW SUMMARY ---\n{summary}\n"
         
-    # 3. Format active message history window (last 5 messages)
+    # Format active message history window (MAX last 2 messages for minimal context overhead)
     history_lines = []
-    if active_history:
-        history_lines.append("\n--- ACTIVE CONVERSATION WINDOW ---")
-        for msg in active_history:
+    recent_history = active_history[-2:] if active_history else []
+    if recent_history:
+        history_lines.append("\n--- RECENT CONVERSATION WINDOW ---")
+        for msg in recent_history:
             sender = "User" if msg.role == "user" else "AI"
             history_lines.append(f"{sender}: {msg.text}")
     history_context = "\n".join(history_lines)
     
-    # 4. Assemble the final unified prompt
+    # Format asked questions so the AI doesn't repeat them
+    asked_lines = []
+    asked = state.get("asked_questions", [])
+    if asked:
+        asked_lines.append("\n--- PREVIOUS QUESTIONS ASKED (Do not repeat these exact questions) ---")
+        for q in asked[-5:]: # list the last 5 questions asked
+            asked_lines.append(f"- {q}")
+    asked_context = "\n".join(asked_lines)
+
+    # Assemble the final unified prompt
     prompt = (
         f"{get_system_prompt()}\n\n"
         f"{state_context}\n"
         f"{section_instructions}\n"
         f"{summary_context}\n"
+        f"{asked_context}\n"
         f"{history_context}\n\n"
         f"--- LATEST USER MESSAGE ---\n"
         f"User: {current_query}\n\n"

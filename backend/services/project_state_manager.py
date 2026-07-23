@@ -8,26 +8,37 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models import Project
 from services.gap_analyzer import analyze_gaps
+from utils.prod_ready import request_with_retry
 
 PREDICTION_URL = "https://forjinn.com/api/v1/prediction/249fc96e-5b62-4208-8787-0d77367e9eaf"
 
 DEFAULT_STATE = {
+    # Project Info
     "project_name": "",
     "industry": "",
-    "stakeholders": [],
-    "timeline": "",
-    "budget": "",
-    "functional_requirements": [],
-    "non_functional_requirements": [],
-    "integrations": [],
-    "constraints": [],
-    # Additional keys for legacy compatibility
     "department": "",
     "sponsor": "",
     "business_unit": "",
-    "business_problem": "",
-    "business_goals": "",
-    "desired_outcomes": ""
+    "timeline": "",
+    "budget": "",
+    
+    # Core Requirements State
+    "business_requirements": [],
+    "functional_requirements": [],
+    "non_functional_requirements": [],
+    "stakeholders": [],
+    "constraints": [],
+    "assumptions": [],
+    "risks": [],
+    "integrations": [],
+    "user_roles": [],
+    
+    # Metadata and chatbot tracker
+    "asked_questions": [],
+    "pending_questions": [],
+    "completed_sections": [],
+    "generated_summaries": "",
+    "next_question": ""
 }
 
 def get_structured_state(project: Project) -> dict:
@@ -36,7 +47,6 @@ def get_structured_state(project: Project) -> dict:
         return DEFAULT_STATE.copy()
     try:
         state = json.loads(project.structured_state)
-        # Ensure all default keys are present
         merged_state = DEFAULT_STATE.copy()
         merged_state.update(state)
         return merged_state
@@ -56,19 +66,20 @@ def clean_json_text(text: str) -> str:
         text = re.sub(r"\n```$", "", text)
     return text.strip()
 
-def extract_delta_updates(user_msg: str, ai_reply: str, current_state: dict) -> dict:
+def extract_delta_updates(user_msg: str, ai_reply: str, current_state: dict, active_section: str = None) -> dict:
     """Call Forjinn to identify and parse any updated project values from the latest dialogue."""
     prompt = (
         "You are a precise data extraction agent. Analyze the latest user message and AI reply against the "
         "current project state, and return a JSON object containing ONLY the keys that were newly discovered "
         "or updated in this turn.\n\n"
+        f"The user is currently answering questions for the requirement stage: '{active_section or 'General'}'. Focus updates on this section.\n\n"
         f"--- CURRENT PROJECT STATE ---\n{json.dumps(current_state, indent=2)}\n\n"
         f"--- LATEST EXCHANGE ---\nUser: {user_msg}\nAI: {ai_reply}\n\n"
         "Return a JSON dictionary containing only the modified keys. If no values were modified or added, return an empty dictionary {}.\n"
         "Rules:\n"
-        "1. For list fields like stakeholders or functional_requirements, return the complete updated list if changes occurred.\n"
+        "1. For list fields (like functional_requirements, non_functional_requirements, assumptions, risks), return the complete updated list if changes occurred.\n"
         "2. For functional_requirements, each element must be a dictionary with keys: 'title', 'priority' (High/Medium/Low), 'confidence' (float 0.0-1.0).\n"
-        "3. Do not include markdown code blocks (like ```json). Respond with raw JSON text only."
+        "3. Do not include markdown code blocks. Respond with raw JSON text only."
     )
     
     payload = {
@@ -77,8 +88,7 @@ def extract_delta_updates(user_msg: str, ai_reply: str, current_state: dict) -> 
     }
     
     try:
-        response = requests.post(PREDICTION_URL, json=payload, timeout=45, verify=False)
-        response.raise_for_status()
+        response = request_with_retry("POST", PREDICTION_URL, json=payload, timeout=45, verify=False)
         res_data = response.json()
         
         extracted_text = res_data.get("text")
@@ -100,18 +110,41 @@ def extract_delta_updates(user_msg: str, ai_reply: str, current_state: dict) -> 
         print(f"Failed to extract delta updates: {str(e)}")
     return {}
 
-def update_project_state(db: Session, project: Project, user_msg: str, ai_reply: str) -> dict:
+def update_project_state(db: Session, project: Project, user_msg: str, ai_reply: str, active_section: str = None) -> dict:
     """Perform delta extraction and apply updates to project state in database."""
     state = get_structured_state(project)
-    delta = extract_delta_updates(user_msg, ai_reply, state)
+    delta = extract_delta_updates(user_msg, ai_reply, state, active_section)
     
+    # Extract questions asked in the AI reply
+    questions = re.findall(r'([^.!?]*\?)', ai_reply)
+    for q in questions:
+        q_clean = q.strip()
+        if q_clean and q_clean not in state.setdefault("asked_questions", []):
+            state["asked_questions"].append(q_clean)
+
     if delta:
         print(f"Applying delta updates to project {project.id}: {list(delta.keys())}")
         state.update(delta)
-        save_structured_state(db, project, state)
-    else:
-        print(f"No state delta detected for project {project.id}.")
         
+        # Track completed sections in state
+        gaps = analyze_gaps(state)
+        state["completed_sections"] = gaps.get("completed_fields", [])
+        
+        # Generate cohesive summaries from state
+        summary_lines = []
+        if state.get("project_name"):
+            summary_lines.append(f"Project Name: {state.get('project_name')}")
+        if state.get("functional_requirements"):
+            titles = [r.get("title") if isinstance(r, dict) else str(r) for r in state.get("functional_requirements")]
+            summary_lines.append(f"Functional Reqs: {', '.join(titles)}")
+        if state.get("non_functional_requirements"):
+            summary_lines.append(f"Non-Functional: {', '.join(state.get('non_functional_requirements'))}")
+        if state.get("risks"):
+            summary_lines.append(f"Risks: {', '.join(state.get('risks'))}")
+            
+        state["generated_summaries"] = " | ".join(summary_lines)
+        
+    save_structured_state(db, project, state)
     return state
 
 def get_legacy_payload(project: Project) -> dict:
@@ -119,7 +152,6 @@ def get_legacy_payload(project: Project) -> dict:
     state = get_structured_state(project)
     gaps = analyze_gaps(state)
     
-    # Format requirements
     reqs = []
     for r in state.get("functional_requirements", []):
         if isinstance(r, dict):
@@ -135,7 +167,6 @@ def get_legacy_payload(project: Project) -> dict:
                 "confidence": 1.0
             })
             
-    # Load messages from relationship sorted chronologically
     messages_payload = []
     if project.messages:
         messages_payload = [
@@ -143,7 +174,6 @@ def get_legacy_payload(project: Project) -> dict:
             for m in sorted(project.messages, key=lambda x: x.created_at)
         ]
     else:
-        # Fallback to legacy field data
         try:
             if project.data:
                 existing_data = json.loads(project.data)
@@ -166,17 +196,17 @@ def get_legacy_payload(project: Project) -> dict:
             "expected_completion": state.get("timeline") or ""
         },
         "overview": {
-            "description": state.get("overview_description") or state.get("business_problem") or "",
+            "description": state.get("business_requirements") or state.get("business_problem") or "",
             "stakeholders": state.get("stakeholders") or []
         },
         "discovery": {
-            "business_problem": state.get("business_problem") or "",
-            "business_goals": state.get("business_goals") or "",
-            "desired_outcomes": state.get("desired_outcomes") or "",
-            "constraints": state.get("constraints") or "",
+            "business_problem": state.get("business_requirements") or "",
+            "business_goals": state.get("industry") or "",
+            "desired_outcomes": state.get("generated_summaries") or "",
+            "constraints": state.get("constraints") or [],
             "budget": state.get("budget") or "",
             "integrations": state.get("integrations") or [],
-            "non_functional_requirements": state.get("non_functional_requirements") or ""
+            "non_functional_requirements": state.get("non_functional_requirements") or []
         },
         "functional_requirements": reqs,
         "missing_fields": gaps["missing_fields"],
