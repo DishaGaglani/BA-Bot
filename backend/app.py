@@ -145,6 +145,10 @@ def predict(
     else:
         raise HTTPException(status_code=400, detail="Either projectId or sessionId is required")
 
+    # Check if project is locked
+    if project.locked:
+        raise HTTPException(status_code=403, detail="This project has been locked by an administrator and cannot be modified.")
+
     # 2. Save user message to database
     is_first_message = len(project.messages) == 0
     save_message(db, project.id, "user", payload.question)

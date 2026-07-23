@@ -208,6 +208,64 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
     }
   };
 
+  const handleToggleLock = async (projectId: number, currentLocked: boolean) => {
+    try {
+      const endpoint = currentLocked ? 'unlock' : 'lock';
+      const res = await fetch(`http://127.0.0.1:8000/api/admin/projects/${projectId}/${endpoint}`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        await fetchProjects();
+      } else {
+        const err = await res.json();
+        alert(err.detail || 'Failed to toggle lock.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error toggling lock.');
+    }
+  };
+
+  const handleClone = async (projectId: number) => {
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/api/admin/projects/${projectId}/clone`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        await fetchProjects();
+      } else {
+        const err = await res.json();
+        alert(err.detail || 'Failed to clone project.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error cloning project.');
+    }
+  };
+
+  const handleDownloadExport = async (projectId: number, format: 'pdf' | 'word', projectName: string) => {
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/export?format=${format}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${projectName.replace(/\s+/g, '_')}_requirements.${format === 'word' ? 'docx' : 'pdf'}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+      alert('Error exporting specifications.');
+    }
+  };
+
   const openEdit = (p: ProjectData) => {
     setActiveProject(p);
     setName(p.name);
@@ -366,7 +424,14 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
                 {filteredProjects.map((p) => (
                   <tr key={p.id}>
                     <td>
-                      <div style={{ fontWeight: '600', color: '#0f172a' }}>{p.name}</div>
+                      <div style={{ fontWeight: '600', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        {p.name}
+                        {p.locked && (
+                          <span style={{ fontSize: '0.7rem', padding: '2px 6px', background: '#ffe4e6', color: '#be123c', borderRadius: '4px', fontWeight: 'bold' }}>
+                            🔒 LOCKED
+                          </span>
+                        )}
+                      </div>
                       {p.tags && (
                         <div style={{ display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap' }}>
                           {p.tags.split(',').map(tag => (
@@ -398,13 +463,41 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
                       </div>
                     </td>
                     <td style={{ textAlign: 'right' }}>
-                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                      <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                         <button 
                           className="admin-btn secondary small" 
                           onClick={() => onSelectProject(p.id)}
                           title="View Details"
                         >
                           👁️ Details
+                        </button>
+                        <button 
+                          className="admin-btn secondary small" 
+                          onClick={() => handleToggleLock(p.id, p.locked)}
+                          title={p.locked ? "Unlock Project" : "Lock Project"}
+                        >
+                          {p.locked ? '🔓' : '🔒'}
+                        </button>
+                        <button 
+                          className="admin-btn secondary small" 
+                          onClick={() => handleClone(p.id)}
+                          title="Clone Project"
+                        >
+                          👥
+                        </button>
+                        <button 
+                          className="admin-btn secondary small" 
+                          onClick={() => handleDownloadExport(p.id, 'word', p.name)}
+                          title="Export DOCX"
+                        >
+                          📄
+                        </button>
+                        <button 
+                          className="admin-btn secondary small" 
+                          onClick={() => handleDownloadExport(p.id, 'pdf', p.name)}
+                          title="Export PDF"
+                        >
+                          📕
                         </button>
                         <button 
                           className="admin-btn secondary small" 

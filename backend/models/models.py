@@ -61,6 +61,7 @@ class Project(Base):
     data = Column(Text, nullable=True)
     summary = Column(Text, nullable=True)
     structured_state = Column(Text, nullable=True)
+    locked = Column(Boolean, default=False, nullable=False)
 
     # Relationships
     owner = relationship("User", back_populates="owned_projects")

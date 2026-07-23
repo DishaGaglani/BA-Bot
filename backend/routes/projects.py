@@ -166,6 +166,9 @@ def update_project(
     project: Project = Depends(require_project_access(ProjectMemberRole.CONTRIBUTOR)),
     db: Session = Depends(get_db)
 ):
+    if project.locked:
+        raise HTTPException(status_code=403, detail="Project is locked and cannot be updated.")
+
     # Preserve existing sessionId if update payload lacks one
     try:
         existing_data = json.loads(project.data)
@@ -321,6 +324,9 @@ def submit_project(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    if project.locked:
+        raise HTTPException(status_code=403, detail="Project is locked and cannot be submitted.")
+
     project.status = "IN_REVIEW"
     db.commit()
     

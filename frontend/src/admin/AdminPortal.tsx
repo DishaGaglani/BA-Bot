@@ -30,6 +30,11 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
   const [usersList, setUsersList] = useState<User[]>([]);
+  
+  // Sub-tab selectors for consolidated views
+  const [dashboardSubTab, setDashboardSubTab] = useState<'metrics' | 'analytics'>('metrics');
+  const [usersSubTab, setUsersSubTab] = useState<'directory' | 'permissions'>('directory');
+  const [conversationsSubTab, setConversationsSubTab] = useState<'dialogue' | 'specs'>('dialogue');
   const [logsList, setLogsList] = useState<any[]>([]);
   const [permissionsMatrix, setPermissionsMatrix] = useState<any>({});
   const [dashboardStats, setDashboardStats] = useState<any>({
@@ -262,27 +267,103 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
       onSwitchMode={onSwitchMode}
     >
       {activeTab === 'dashboard' && (
-        <Dashboard stats={dashboardStats} />
+        <>
+          <div style={{ display: 'flex', borderBottom: '1px solid #e2e8f0', marginBottom: '20px', gap: '20px' }}>
+            <button 
+              onClick={() => setDashboardSubTab('metrics')}
+              style={{
+                padding: '10px 4px',
+                background: 'none',
+                border: 'none',
+                borderBottom: dashboardSubTab === 'metrics' ? '2px solid var(--admin-primary)' : '2px solid transparent',
+                color: dashboardSubTab === 'metrics' ? 'var(--admin-primary)' : '#64748b',
+                fontWeight: '600',
+                fontSize: '0.9rem',
+                cursor: 'pointer',
+                marginBottom: '-1px'
+              }}
+            >
+              📊 Overview Metrics
+            </button>
+            <button 
+              onClick={() => setDashboardSubTab('analytics')}
+              style={{
+                padding: '10px 4px',
+                background: 'none',
+                border: 'none',
+                borderBottom: dashboardSubTab === 'analytics' ? '2px solid var(--admin-primary)' : '2px solid transparent',
+                color: dashboardSubTab === 'analytics' ? 'var(--admin-primary)' : '#64748b',
+                fontWeight: '600',
+                fontSize: '0.9rem',
+                cursor: 'pointer',
+                marginBottom: '-1px'
+              }}
+            >
+              📈 Telemetry & Analytics
+            </button>
+          </div>
+          {dashboardSubTab === 'metrics' ? (
+            <Dashboard stats={dashboardStats} />
+          ) : (
+            <AnalyticsPanel token={token} />
+          )}
+        </>
       )}
       
       {activeTab === 'users' && (
-        <UserManagement
-          users={usersList}
-          currentUser={currentUser}
-          loading={loadingUsers}
-          onUpdateRole={handleUpdateRole}
-          onUpdateUser={handleUpdateUser}
-          onDeleteUser={handleDeleteUser}
-          onAddUser={handleAddUser}
-        />
-      )}
-
-      {activeTab === 'roles' && (
-        <RolesPermissions
-          matrix={permissionsMatrix}
-          loading={loadingPermissions}
-          onSavePermissions={handleSavePermissions}
-        />
+        <>
+          <div style={{ display: 'flex', borderBottom: '1px solid #e2e8f0', marginBottom: '20px', gap: '20px' }}>
+            <button 
+              onClick={() => setUsersSubTab('directory')}
+              style={{
+                padding: '10px 4px',
+                background: 'none',
+                border: 'none',
+                borderBottom: usersSubTab === 'directory' ? '2px solid var(--admin-primary)' : '2px solid transparent',
+                color: usersSubTab === 'directory' ? 'var(--admin-primary)' : '#64748b',
+                fontWeight: '600',
+                fontSize: '0.9rem',
+                cursor: 'pointer',
+                marginBottom: '-1px'
+              }}
+            >
+              👥 User Directory
+            </button>
+            <button 
+              onClick={() => setUsersSubTab('permissions')}
+              style={{
+                padding: '10px 4px',
+                background: 'none',
+                border: 'none',
+                borderBottom: usersSubTab === 'permissions' ? '2px solid var(--admin-primary)' : '2px solid transparent',
+                color: usersSubTab === 'permissions' ? 'var(--admin-primary)' : '#64748b',
+                fontWeight: '600',
+                fontSize: '0.9rem',
+                cursor: 'pointer',
+                marginBottom: '-1px'
+              }}
+            >
+              🛡️ RBAC Permissions Matrix
+            </button>
+          </div>
+          {usersSubTab === 'directory' ? (
+            <UserManagement
+              users={usersList}
+              currentUser={currentUser}
+              loading={loadingUsers}
+              onUpdateRole={handleUpdateRole}
+              onUpdateUser={handleUpdateUser}
+              onDeleteUser={handleDeleteUser}
+              onAddUser={handleAddUser}
+            />
+          ) : (
+            <RolesPermissions
+              matrix={permissionsMatrix}
+              loading={loadingPermissions}
+              onSavePermissions={handleSavePermissions}
+            />
+          )}
+        </>
       )}
 
       {activeTab === 'projects' && (
@@ -303,15 +384,47 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
       )}
 
       {activeTab === 'conversations' && (
-        <ConversationsPanel token={token} />
-      )}
-
-      {activeTab === 'documents' && (
-        <DocumentsPanel token={token} />
-      )}
-
-      {activeTab === 'analytics' && (
-        <AnalyticsPanel token={token} />
+        <>
+          <div style={{ display: 'flex', borderBottom: '1px solid #e2e8f0', marginBottom: '20px', gap: '20px' }}>
+            <button 
+              onClick={() => setConversationsSubTab('dialogue')}
+              style={{
+                padding: '10px 4px',
+                background: 'none',
+                border: 'none',
+                borderBottom: conversationsSubTab === 'dialogue' ? '2px solid var(--admin-primary)' : '2px solid transparent',
+                color: conversationsSubTab === 'dialogue' ? 'var(--admin-primary)' : '#64748b',
+                fontWeight: '600',
+                fontSize: '0.9rem',
+                cursor: 'pointer',
+                marginBottom: '-1px'
+              }}
+            >
+              💬 Chat Dialogue Monitoring
+            </button>
+            <button 
+              onClick={() => setConversationsSubTab('specs')}
+              style={{
+                padding: '10px 4px',
+                background: 'none',
+                border: 'none',
+                borderBottom: conversationsSubTab === 'specs' ? '2px solid var(--admin-primary)' : '2px solid transparent',
+                color: conversationsSubTab === 'specs' ? 'var(--admin-primary)' : '#64748b',
+                fontWeight: '600',
+                fontSize: '0.9rem',
+                cursor: 'pointer',
+                marginBottom: '-1px'
+              }}
+            >
+              📄 Compliance Documents
+            </button>
+          </div>
+          {conversationsSubTab === 'dialogue' ? (
+            <ConversationsPanel token={token} />
+          ) : (
+            <DocumentsPanel token={token} />
+          )}
+        </>
       )}
 
       {activeTab === 'settings' && (
@@ -319,7 +432,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
       )}
 
       {/* Placeholder Tabs */}
-      {!['dashboard', 'users', 'roles', 'projects', 'conversations', 'documents', 'analytics', 'settings'].includes(activeTab) && (
+      {!['dashboard', 'users', 'projects', 'conversations', 'settings'].includes(activeTab) && (
         <div style={{ padding: '24px', backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0', minHeight: '300px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
           <div style={{ fontSize: '3rem', marginBottom: '16px' }}>🚧</div>
           <h2 style={{ fontSize: '1.25rem', fontWeight: '700', color: '#0f172a', margin: '0 0 8px 0' }}>Under Construction</h2>

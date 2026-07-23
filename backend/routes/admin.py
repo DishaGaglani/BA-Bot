@@ -451,6 +451,7 @@ def list_admin_projects(
             "status": p.status,
             "tags": p.tags or "",
             "member_count": member_count,
+            "locked": p.locked,
             "created_at": p.created_at.isoformat()
         })
     return result
@@ -814,6 +815,7 @@ def get_admin_project_details(
         "tags": project.tags or "",
         "owner_name": owner_name,
         "owner_email": owner_email,
+        "locked": project.locked,
         "created_at": project.created_at.isoformat()
     }
     
@@ -882,6 +884,7 @@ class SystemSettingsUpdate(BaseModel):
     aiModel: str
     tokenTimeout: int
     allowRegistration: bool
+    systemPrompt: str | None = None
 
 @router.get("/conversations")
 def list_admin_conversations(
@@ -1011,7 +1014,16 @@ def read_settings() -> dict:
         "workspaceName": "BA Bot Workspace",
         "aiModel": "Prediction Agent",
         "tokenTimeout": 3600,
-        "allowRegistration": True
+        "allowRegistration": True,
+        "systemPrompt": (
+            "You are an expert Business Analyst leading a structured discovery workshop.\n"
+            "Your objective is to interview the user and gather requirements. Ask only one clear, "
+            "concise question at a time to gather the needed information for the current focus section.\n"
+            "Guidelines:\n"
+            "1. Do not ask questions about sections that are already completed.\n"
+            "2. If the user wanders off-topic, gently guide them back to the active section.\n"
+            "3. Keep your questions and responses brief and highly conversational."
+        )
     }
 
 @router.get("/settings")
@@ -1031,3 +1043,120 @@ def save_admin_settings(
         return {"status": "ok", "message": "Settings saved successfully."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save settings file: {str(e)}")
+
+@router.put("/projects/{project_id}/lock")
+def lock_admin_project(
+    project_id: int,
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    db: Session = Depends(get_db)
+):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    project.locked = True
+    db.commit()
+    
+    from services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="project locked",
+        project_id=project.id,
+        metadata={"locked_by": current_user.email}
+    )
+    return {"status": "ok", "message": "Project locked successfully."}
+
+@router.put("/projects/{project_id}/unlock")
+def unlock_admin_project(
+    project_id: int,
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    db: Session = Depends(get_db)
+):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    project.locked = False
+    db.commit()
+    
+    from services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="project unlocked",
+        project_id=project.id,
+        metadata={"unlocked_by": current_user.email}
+    )
+    return {"status": "ok", "message": "Project unlocked successfully."}
+
+@router.post("/projects/{project_id}/clone")
+def clone_admin_project(
+    project_id: int,
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    db: Session = Depends(get_db)
+):
+    import uuid
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    session_id = f"session-{uuid.uuid4()}"
+    
+    # Create clone
+    cloned_project = Project(
+        owner_id=current_user.id,
+        name=f"Copy of {project.name}",
+        description=project.description,
+        department=project.department,
+        business_unit=project.business_unit,
+        priority=project.priority,
+        start_date=project.start_date,
+        end_date=project.end_date,
+        status="DRAFT",
+        tags=project.tags,
+        session_id=session_id,
+        data=project.data,
+        summary=project.summary,
+        structured_state=project.structured_state,
+        locked=False
+    )
+    db.add(cloned_project)
+    db.commit()
+    db.refresh(cloned_project)
+    
+    # Copy members
+    original_members = db.query(ProjectMember).filter(ProjectMember.project_id == project_id).all()
+    has_creator = False
+    for m in original_members:
+        if m.user_id == current_user.id:
+            has_creator = True
+        new_m = ProjectMember(
+            project_id=cloned_project.id,
+            user_id=m.user_id,
+            role=m.role
+        )
+        db.add(new_m)
+        
+    if not has_creator:
+        creator_m = ProjectMember(
+            project_id=cloned_project.id,
+            user_id=current_user.id,
+            role=ProjectMemberRole.PROJECT_MANAGER
+        )
+        db.add(creator_m)
+        
+    db.commit()
+    
+    from services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="project cloned",
+        project_id=cloned_project.id,
+        metadata={
+            "cloned_from_id": project_id,
+            "cloned_by": current_user.email
+        }
+    )
+    return {"status": "ok", "message": "Project cloned successfully.", "project_id": cloned_project.id}

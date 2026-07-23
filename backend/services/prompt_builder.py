@@ -15,6 +15,18 @@ DEFAULT_SYSTEM_PROMPT = (
     "3. Keep your questions and responses brief and highly conversational."
 )
 
+def get_system_prompt() -> str:
+    settings_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "system_settings.json")
+    if os.path.exists(settings_path):
+        try:
+            with open(settings_path, "r") as f:
+                cfg = json.load(f)
+                if "systemPrompt" in cfg and cfg["systemPrompt"]:
+                    return cfg["systemPrompt"]
+        except Exception:
+            pass
+    return DEFAULT_SYSTEM_PROMPT
+
 def build_optimized_prompt(
     state: dict,
     gap_analysis: dict,
@@ -79,7 +91,7 @@ def build_optimized_prompt(
     
     # 4. Assemble the final unified prompt
     prompt = (
-        f"{DEFAULT_SYSTEM_PROMPT}\n\n"
+        f"{get_system_prompt()}\n\n"
         f"{state_context}\n"
         f"{summary_context}\n"
         f"{history_context}\n\n"

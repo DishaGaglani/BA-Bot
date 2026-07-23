@@ -30,14 +30,11 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({
   const [isProfileOpen, setIsProfileOpen] = useState(false);
 
   const sidebarItems: SidebarItem[] = [
-    { id: 'dashboard', label: 'Dashboard', icon: '📊' },
-    { id: 'users', label: 'Users', icon: '👥' },
-    { id: 'roles', label: 'Roles', icon: '🛡️' },
-    { id: 'projects', label: 'Projects', icon: '📁' },
-    { id: 'conversations', label: 'Conversations', icon: '💬' },
-    { id: 'documents', label: 'Documents', icon: '📄' },
-    { id: 'analytics', label: 'Analytics', icon: '📈' },
-    { id: 'settings', label: 'Settings', icon: '⚙️' }
+    { id: 'dashboard', label: 'Telemetry & Dashboard', icon: '📊' },
+    { id: 'users', label: 'Access & Identity', icon: '👥' },
+    { id: 'projects', label: 'Workspace Directory', icon: '📁' },
+    { id: 'conversations', label: 'Dialogue & Specs', icon: '💬' },
+    { id: 'settings', label: 'System Config', icon: '⚙️' }
   ];
 
   const getBreadcrumbTitle = (tab: string) => {

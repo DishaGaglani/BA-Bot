@@ -155,6 +155,7 @@ def run_migration():
                 ("projects", "start_date", "TEXT"),
                 ("projects", "end_date", "TEXT"),
                 ("projects", "tags", "TEXT"),
+                ("projects", "locked", "BOOLEAN DEFAULT 0"),
                 ("users", "department", "TEXT DEFAULT 'IT'"),
                 ("users", "status", "TEXT DEFAULT 'ACTIVE'"),
                 ("users", "last_login", "TEXT")

@@ -95,6 +95,26 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
     void fetchDetails();
   }, [projectId, token]);
 
+  const handleToggleLock = async () => {
+    if (!overview) return;
+    try {
+      const endpoint = overview.locked ? 'unlock' : 'lock';
+      const res = await fetch(`http://127.0.0.1:8000/api/admin/projects/${projectId}/${endpoint}`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        await fetchDetails();
+      } else {
+        const err = await res.json();
+        alert(err.detail || 'Failed to toggle lock.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error toggling lock.');
+    }
+  };
+
   const handleRemoveMember = async (userId: number) => {
     if (!confirm('Are you sure you want to remove this user from the project?')) return;
     try {
@@ -204,7 +224,7 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
       <div className="project-detail-header-card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
               <h1 style={{ margin: '0' }}>{overview.name}</h1>
               <span className={`badge ${overview.priority === 'CRITICAL' || overview.priority === 'HIGH' ? 'warning' : 'primary'}`}>
                 {overview.priority} Priority
@@ -219,10 +239,29 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
               }}>
                 {overview.status}
               </span>
+              {overview.locked && (
+                <span style={{
+                  fontSize: '0.8rem',
+                  padding: '4px 10px',
+                  borderRadius: '9999px',
+                  background: '#ffe4e6',
+                  color: '#be123c',
+                  fontWeight: '600'
+                }}>
+                  🔒 Locked
+                </span>
+              )}
             </div>
             <p style={{ margin: '8px 0 0 0', color: '#64748b', fontSize: '0.9rem' }}>
               Managed by: <strong>{overview.owner_name}</strong> ({overview.owner_email})
             </p>
+            <button
+              onClick={handleToggleLock}
+              className="admin-btn secondary small"
+              style={{ marginTop: '8px' }}
+            >
+              {overview.locked ? '🔓 Unlock Workspace' : '🔒 Lock Workspace'}
+            </button>
           </div>
           <div style={{ fontSize: '0.85rem', color: '#64748b', textAlign: 'right' }}>
             <div>Created: <strong>{new Date(overview.created_at).toLocaleDateString()}</strong></div>
