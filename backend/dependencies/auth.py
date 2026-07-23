@@ -45,6 +45,13 @@ def get_current_user(
             detail="Authenticated user no longer exists"
         )
     
+    # Check if user status is DISABLED
+    if hasattr(user, "status") and user.status == "DISABLED":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account has been disabled. Please contact the administrator."
+        )
+    
     return user
 
 def require_role(allowed_roles: list[UserRole]):
@@ -53,7 +60,7 @@ def require_role(allowed_roles: list[UserRole]):
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db)
     ) -> User:
-        if current_user.role == UserRole.ADMIN or current_user.role in allowed_roles:
+        if current_user.role in [UserRole.SUPER_ADMIN, UserRole.ADMIN] or current_user.role in allowed_roles:
             return current_user
         
         # Log permission denied
@@ -84,7 +91,7 @@ def require_project_access(minimum_role: ProjectMemberRole):
             )
         
         # Admin override
-        if current_user.role == UserRole.ADMIN:
+        if current_user.role in [UserRole.SUPER_ADMIN, UserRole.ADMIN]:
             return project
             
         # Check if project owner (owner always has OWNER role)
@@ -113,8 +120,9 @@ def require_project_access(minimum_role: ProjectMemberRole):
             
         # Compare roles hierarchy
         role_hierarchy = {
-            ProjectMemberRole.OWNER: 3,
-            ProjectMemberRole.EDITOR: 2,
+            ProjectMemberRole.PROJECT_MANAGER: 4,
+            ProjectMemberRole.BUSINESS_ANALYST: 3,
+            ProjectMemberRole.CONTRIBUTOR: 2,
             ProjectMemberRole.VIEWER: 1
         }
         
@@ -148,7 +156,7 @@ def require_project_owner(
             detail="Project not found"
         )
         
-    if current_user.role == UserRole.ADMIN or project.owner_id == current_user.id:
+    if current_user.role in [UserRole.SUPER_ADMIN, UserRole.ADMIN] or project.owner_id == current_user.id:
         return project
         
     # Log permission denied

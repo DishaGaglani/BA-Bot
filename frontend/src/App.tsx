@@ -2,13 +2,14 @@ import { useEffect, useState, useRef, type FormEvent, type ChangeEvent } from 'r
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import './App.css'
+import AdminPortal from './admin/AdminPortal'
 
 type PageView = 'dashboard' | 'new-project' | 'interview' | 'review' | 'export' | 'admin'
 type MessageRole = 'ai' | 'user'
 type UpdateSection = 'project' | 'overview' | 'discovery'
 
 // User Roles
-type UserRole = 'ADMIN' | 'BUSINESS_ANALYST' | 'REVIEWER' | 'CLIENT'
+type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'BUSINESS_ANALYST' | 'PROJECT_MANAGER' | 'VIEWER' | 'REVIEWER' | 'CLIENT'
 // Project Member Roles
 type ProjectMemberRole = 'OWNER' | 'EDITOR' | 'VIEWER'
 
@@ -364,7 +365,7 @@ function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   
   // Auth Form State
-  const [authTab, setAuthTab] = useState<'login' | 'register'>('login')
+  const [authTab, setAuthTab] = useState<'login' | 'register' | 'admin' | 'admin_register'>('login')
   const [loginEmail, setLoginEmail] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
   const [regName, setRegName] = useState('')
@@ -394,6 +395,49 @@ function App() {
   
   // Feedback from Reviewer
   const [reviewerFeedback, setReviewerFeedback] = useState('')
+
+  // Workspace tab & details state
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<'details' | 'overview' | 'discovery' | 'requirements' | 'members'>('details')
+
+  const handleAddRequirement = () => {
+    setProjectData((prev) => {
+      const prevReqs = prev.functional_requirements || []
+      return {
+        ...prev,
+        functional_requirements: [
+          ...prevReqs,
+          { title: 'New requirement title', priority: 'Medium', confidence: 1.0 }
+        ]
+      }
+    })
+  }
+
+  const handleUpdateRequirement = (index: number, key: 'title' | 'priority' | 'confidence', value: any) => {
+    setProjectData((prev) => {
+      const list = [...(prev.functional_requirements || [])]
+      if (list[index]) {
+        list[index] = {
+          ...list[index],
+          [key]: value
+        }
+      }
+      return {
+        ...prev,
+        functional_requirements: list
+      }
+    })
+  }
+
+  const handleDeleteRequirement = (index: number) => {
+    setProjectData((prev) => {
+      const list = [...(prev.functional_requirements || [])]
+      list.splice(index, 1)
+      return {
+        ...prev,
+        functional_requirements: list
+      }
+    })
+  }
 
   // Admin panel state
   const [adminTab, setAdminTab] = useState<'users' | 'logs'>('users')
@@ -737,6 +781,7 @@ function App() {
   useEffect(() => {
     const fetchProfileAndProjects = async () => {
       if (!token) {
+        // If not logged in and requesting /admin, keep user on login page
         setIsLoaded(true)
         return
       }
@@ -760,7 +805,19 @@ function App() {
               localStorage.removeItem('ba_bot_active_project_id')
             }
           }
-          setActivePage('dashboard')
+          
+          // Path routing protection
+          if (window.location.pathname === '/admin') {
+            if (user.role === 'SUPER_ADMIN' || user.role === 'ADMIN') {
+              setActivePage('admin')
+            } else {
+              // Redirect non-admins to dashboard
+              setActivePage('dashboard')
+              window.history.replaceState({}, '', '/')
+            }
+          } else {
+            setActivePage('dashboard')
+          }
         } else {
           handleLogout()
           setIsLoaded(true)
@@ -772,6 +829,25 @@ function App() {
     }
     void fetchProfileAndProjects()
   }, [token])
+
+  // Sync state with browser back/forward buttons
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname
+      if (path === '/admin') {
+        if (currentUser && (currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'ADMIN')) {
+          setActivePage('admin')
+        } else {
+          setActivePage('dashboard')
+          window.history.replaceState({}, '', '/')
+        }
+      } else {
+        setActivePage('dashboard')
+      }
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [currentUser])
 
   // Sync details on edit
   useEffect(() => {
@@ -1017,11 +1093,11 @@ function App() {
     }
   }
 
-  const updateField = (section: UpdateSection, key: string, value: string) => {
+  const updateField = (section: UpdateSection, key: string, value: any) => {
     setProjectData((prev) => ({
       ...prev,
       [section]: {
-        ...(prev[section] as Record<string, string>),
+        ...(prev[section] as Record<string, any>),
         [key]: value,
       },
     }))
@@ -1095,6 +1171,13 @@ function App() {
   const handleReviewAction = async (action: string) => {
     if (action.startsWith('Edit')) {
       setActivePage('interview')
+      if (action.includes('Overview')) {
+        setActiveWorkspaceTab('overview')
+      } else if (action.includes('Discovery')) {
+        setActiveWorkspaceTab('discovery')
+      } else if (action.includes('Requirements')) {
+        setActiveWorkspaceTab('requirements')
+      }
       setNotice({ title: action, detail: 'Opened the interview workspace for editing.' })
       setTimeout(() => setNotice(null), 1800)
       return
@@ -1174,6 +1257,18 @@ function App() {
         setCurrentUser(data.user)
         setLoginEmail('')
         setLoginPassword('')
+        
+        // Handle admin automatic routing redirect
+        if (data.user.role === 'SUPER_ADMIN' || data.user.role === 'ADMIN') {
+          setActivePage('admin')
+          window.history.pushState({}, '', '/admin')
+        } else {
+          setActivePage('dashboard')
+          if (window.location.pathname === '/admin') {
+            window.history.replaceState({}, '', '/')
+          }
+        }
+        
         setNotice({ title: 'Welcome Back', detail: `Successfully signed in as ${data.user.name}` })
         setTimeout(() => setNotice(null), 1800)
       } else {
@@ -1210,6 +1305,16 @@ function App() {
           setRegName('')
           setRegEmail('')
           setRegPassword('')
+          
+          if (data.user.role === 'SUPER_ADMIN' || data.user.role === 'ADMIN') {
+            setActivePage('admin')
+            window.history.pushState({}, '', '/admin')
+          } else {
+            setActivePage('dashboard')
+            if (window.location.pathname === '/admin') {
+              window.history.replaceState({}, '', '/')
+            }
+          }
         }
         setTimeout(() => setNotice(null), 1800)
       } else {
@@ -1238,6 +1343,7 @@ function App() {
     setProjectData(initialProject)
     setProjectsList([])
     setActivePage('dashboard')
+    window.history.pushState({}, '', '/')
   }
 
   const getStatusColor = (status: string = 'DRAFT') => {
@@ -1251,8 +1357,11 @@ function App() {
 
   const getRoleLabel = (role: UserRole) => {
     switch (role) {
+      case 'SUPER_ADMIN': return 'Super Admin';
       case 'ADMIN': return 'Administrator';
       case 'BUSINESS_ANALYST': return 'Business Analyst';
+      case 'PROJECT_MANAGER': return 'Project Manager';
+      case 'VIEWER': return 'Viewer';
       case 'REVIEWER': return 'Review Committee';
       default: return role;
     }
@@ -1262,178 +1371,248 @@ function App() {
 
   const renderAuthPage = () => {
     return (
-      <div className="auth-wrapper" style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: '100vh',
-        background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)',
-        padding: '20px'
-      }}>
-        <div className="auth-container" style={{
-          width: '100%',
-          maxWidth: '440px',
-          background: 'rgba(255, 255, 255, 0.95)',
-          borderRadius: '24px',
-          boxShadow: '0 20px 40px rgba(0, 0, 0, 0.3)',
-          overflow: 'hidden',
-          transition: 'all 0.3s ease'
-        }}>
-          <div className="auth-tabs" style={{
-            display: 'flex',
-            borderBottom: '1px solid #e2e8f0'
-          }}>
-            <button 
-              onClick={() => { setAuthTab('login'); setAuthError('') }}
-              style={{
-                flex: 1,
-                padding: '16px',
-                background: authTab === 'login' ? 'transparent' : '#f8fafc',
-                border: 'none',
-                fontWeight: '700',
-                color: authTab === 'login' ? '#3755d4' : '#64748b',
-                cursor: 'pointer',
-                borderBottom: authTab === 'login' ? '3px solid #3755d4' : 'none'
-              }}
-            >
-              Sign In
-            </button>
-            <button 
-              onClick={() => { setAuthTab('register'); setAuthError('') }}
-              style={{
-                flex: 1,
-                padding: '16px',
-                background: authTab === 'register' ? 'transparent' : '#f8fafc',
-                border: 'none',
-                fontWeight: '700',
-                color: authTab === 'register' ? '#3755d4' : '#64748b',
-                cursor: 'pointer',
-                borderBottom: authTab === 'register' ? '3px solid #3755d4' : 'none'
-              }}
-            >
-              Register
-            </button>
+      <div className="auth-split-wrapper">
+        {/* Left Branding Side (Desktop Only) */}
+        <div className="auth-branding-side">
+          <div className="branding-header">
+            <span style={{ fontSize: '2rem' }}>🤖</span>
+            <div className="branding-logo">BA Bot</div>
           </div>
-
-          <div style={{ padding: '32px' }}>
-            <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-              <h2 style={{ margin: '0 0 6px 0', color: '#0f172a', fontSize: '1.6rem' }}>BA Bot</h2>
-              <p style={{ margin: '0', color: '#64748b', fontSize: '0.9rem' }}>Enterprise Requirement Discovery Workshop</p>
+          
+          <div className="branding-content">
+            <h1>Requirements Discovery Workspace</h1>
+            <p>
+              Leverage deterministic gap analysis and intelligent conversational workflows to capture, validate, and compile project requirements.
+            </p>
+            
+            <div className="feature-bullets">
+              <div className="feature-bullet">
+                <div className="feature-bullet-icon">💬</div>
+                <div className="feature-bullet-text">
+                  <strong>Intelligent Chatbot Discovery</strong>
+                  <span>Guided conversational agent that dynamically identifies missing information.</span>
+                </div>
+              </div>
+              
+              <div className="feature-bullet">
+                <div className="feature-bullet-icon">⚙️</div>
+                <div className="feature-bullet-text">
+                  <strong>Structured State Sync</strong>
+                  <span>Interactive forms capture details in real-time, syncing automatically with our backend.</span>
+                </div>
+              </div>
+              
+              <div className="feature-bullet">
+                <div className="feature-bullet-icon">👥</div>
+                <div className="feature-bullet-text">
+                  <strong>Project Collaboration</strong>
+                  <span>Invite teammates with granular roles (Viewer/Editor) to audit and refine scope.</span>
+                </div>
+              </div>
+              
+              <div className="feature-bullet">
+                <div className="feature-bullet-icon">📄</div>
+                <div className="feature-bullet-text">
+                  <strong>Compliance Exports</strong>
+                  <span>Generate professional, client-ready requirements documentation in Word and PDF formats.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div className="branding-footer">
+            <span>© 2026 BA Bot Enterprise</span>
+            <span>v1.0.0</span>
+          </div>
+        </div>
+        
+        {/* Right Form Side */}
+        <div className="auth-form-side">
+          <div className={`auth-card-container ${authTab === 'admin' || authTab === 'admin_register' ? 'admin-portal-mode' : ''}`}>
+            {/* Tabs header */}
+            <div className="auth-tabs">
+              <button 
+                onClick={() => { setAuthTab('login'); setAuthError('') }}
+                className={`auth-tab-btn ${authTab === 'login' ? 'active' : ''}`}
+              >
+                Sign In
+              </button>
+              <button 
+                onClick={() => { setAuthTab('register'); setRegRole('BUSINESS_ANALYST'); setAuthError('') }}
+                className={`auth-tab-btn ${authTab === 'register' ? 'active' : ''}`}
+              >
+                Register
+              </button>
+              <button 
+                onClick={() => { setAuthTab('admin'); setAuthError('') }}
+                className={`auth-tab-btn ${authTab === 'admin' || authTab === 'admin_register' ? 'active' : ''}`}
+              >
+                Admin Portal 🛡️
+              </button>
             </div>
 
-            {authError && (
-              <div style={{
-                background: '#fef2f2',
-                border: '1px solid #fee2e2',
-                color: '#b91c1c',
-                padding: '12px 16px',
-                borderRadius: '10px',
-                fontSize: '0.85rem',
-                marginBottom: '20px',
-                fontWeight: '500'
-              }}>
-                ⚠️ {authError}
+            {/* Form body */}
+            <div style={{ padding: '32px' }}>
+              <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+                <h2 style={{ margin: '0 0 6px 0', fontSize: '1.5rem', color: 'var(--dark-slate)' }}>
+                  {authTab === 'admin' || authTab === 'admin_register' ? 'Control Console' : 'BA Workspace'}
+                </h2>
+                <p style={{ margin: '0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  {authTab === 'admin' || authTab === 'admin_register'
+                    ? 'Authorized Administrative Access Only' 
+                    : 'Enterprise Requirement Discovery Portal'}
+                </p>
               </div>
-            )}
 
-            {authTab === 'login' ? (
-              <form onSubmit={handleLoginSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', fontWeight: '600', color: '#334155' }}>
-                  Email Address
-                  <input 
-                    type="email" 
-                    value={loginEmail} 
-                    onChange={e => setLoginEmail(e.target.value)} 
-                    required 
-                    placeholder="name@company.com"
-                    style={{ padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1' }}
-                  />
-                </label>
-
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', fontWeight: '600', color: '#334155' }}>
-                  Password
-                  <input 
-                    type="password" 
-                    value={loginPassword} 
-                    onChange={e => setLoginPassword(e.target.value)} 
-                    required 
-                    placeholder="••••••••"
-                    style={{ padding: '12px 16px', borderRadius: '12px', border: '1px solid #cbd5e1' }}
-                  />
-                </label>
-
-                <button type="submit" className="primary" style={{
-                  padding: '14px',
-                  borderRadius: '12px',
-                  fontSize: '1rem',
-                  marginTop: '12px',
-                  boxShadow: '0 4px 6px -1px rgba(55, 85, 212, 0.3)'
+              {authError && (
+                <div style={{
+                  background: 'var(--danger-light)',
+                  border: '1px solid rgba(239, 68, 68, 0.2)',
+                  color: 'var(--danger)',
+                  padding: '12px 16px',
+                  borderRadius: '10px',
+                  fontSize: '0.85rem',
+                  marginBottom: '20px',
+                  fontWeight: '500'
                 }}>
-                  Sign In
-                </button>
-              </form>
-            ) : (
-              <form onSubmit={handleRegisterSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.85rem', fontWeight: '600', color: '#334155' }}>
-                  Full Name
-                  <input 
-                    type="text" 
-                    value={regName} 
-                    onChange={e => setRegName(e.target.value)} 
-                    required 
-                    placeholder="John Doe"
-                    style={{ padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1' }}
-                  />
-                </label>
+                  ⚠️ {authError}
+                </div>
+              )}
 
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.85rem', fontWeight: '600', color: '#334155' }}>
-                  Email Address
-                  <input 
-                    type="email" 
-                    value={regEmail} 
-                    onChange={e => setRegEmail(e.target.value)} 
-                    required 
-                    placeholder="name@company.com"
-                    style={{ padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1' }}
-                  />
-                </label>
+              {(authTab === 'admin' || authTab === 'admin_register') && (
+                <div className="admin-warning-box">
+                  <strong>SYSTEM SECURITY NOTICE:</strong> All authentication attempts, system settings changes, and audit log accesses are strictly monitored and recorded.
+                </div>
+              )}
 
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.85rem', fontWeight: '600', color: '#334155' }}>
-                  Password
-                  <input 
-                    type="password" 
-                    value={regPassword} 
-                    onChange={e => setRegPassword(e.target.value)} 
-                    required 
-                    placeholder="••••••••"
-                    style={{ padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1' }}
-                  />
-                </label>
+              {authTab === 'admin' && (
+                <div className="admin-helper-credentials">
+                  <strong>Admin Developer Seed Credentials:</strong><br />
+                  Email: <code style={{ userSelect: 'all', fontWeight: 'bold' }}>admin@example.com</code><br />
+                  Password: <code style={{ userSelect: 'all', fontWeight: 'bold' }}>admin123</code>
+                </div>
+              )}
 
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.85rem', fontWeight: '600', color: '#334155' }}>
-                  Role Selection
-                  <select 
-                    value={regRole} 
-                    onChange={e => setRegRole(e.target.value as UserRole)}
-                    style={{ padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', background: 'white' }}
-                  >
-                    <option value="BUSINESS_ANALYST">Business Analyst</option>
-                    <option value="REVIEWER">Reviewer Committee</option>
-                    <option value="ADMIN">System Admin</option>
-                  </select>
-                </label>
+              {authTab === 'login' || authTab === 'admin' ? (
+                <form onSubmit={handleLoginSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <label>
+                    Email Address
+                    <input 
+                      type="email" 
+                      value={loginEmail} 
+                      onChange={e => setLoginEmail(e.target.value)} 
+                      required 
+                      placeholder={authTab === 'admin' ? "admin@example.com" : "name@company.com"}
+                    />
+                  </label>
 
-                <button type="submit" className="primary" style={{
-                  padding: '14px',
-                  borderRadius: '12px',
-                  fontSize: '1rem',
-                  marginTop: '12px',
-                  boxShadow: '0 4px 6px -1px rgba(55, 85, 212, 0.3)'
-                }}>
-                  Create Account
-                </button>
-              </form>
-            )}
+                  <label>
+                    Password
+                    <input 
+                      type="password" 
+                      value={loginPassword} 
+                      onChange={e => setLoginPassword(e.target.value)} 
+                      required 
+                      placeholder="••••••••"
+                    />
+                  </label>
+
+                  <button type="submit" className={authTab === 'admin' ? 'danger' : 'primary'} style={{
+                    padding: '12px',
+                    fontSize: '0.95rem',
+                    marginTop: '12px',
+                    width: '100%'
+                  }}>
+                    {authTab === 'admin' ? 'Enter Control Console 🛡️' : 'Sign In to Workspace'}
+                  </button>
+
+                  {authTab === 'admin' && (
+                    <div style={{ marginTop: '16px', textAlign: 'center', fontSize: '0.85rem', color: '#64748b' }}>
+                      Don't have an admin account?{' '}
+                      <a 
+                        onClick={() => { setAuthTab('admin_register'); setRegRole('ADMIN'); setAuthError('') }}
+                        style={{ color: '#ef4444', fontWeight: '700', cursor: 'pointer', textDecoration: 'underline' }}
+                      >
+                        Register Admin
+                      </a>
+                    </div>
+                  )}
+                </form>
+              ) : (
+                <form onSubmit={handleRegisterSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <label>
+                    Full Name
+                    <input 
+                      type="text" 
+                      value={regName} 
+                      onChange={e => setRegName(e.target.value)} 
+                      required 
+                      placeholder="John Doe"
+                    />
+                  </label>
+
+                  <label>
+                    Email Address
+                    <input 
+                      type="email" 
+                      value={regEmail} 
+                      onChange={e => setRegEmail(e.target.value)} 
+                      required 
+                      placeholder="name@company.com"
+                    />
+                  </label>
+
+                  <label>
+                    Password
+                    <input 
+                      type="password" 
+                      value={regPassword} 
+                      onChange={e => setRegPassword(e.target.value)} 
+                      required 
+                      placeholder="••••••••"
+                    />
+                  </label>
+
+                  {authTab === 'admin_register' && (
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', fontWeight: '600' }}>
+                      Admin System Role
+                      <select 
+                        value={regRole} 
+                        onChange={e => setRegRole(e.target.value as UserRole)}
+                        style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', cursor: 'pointer', backgroundColor: '#fff' }}
+                      >
+                        <option value="ADMIN">ADMIN</option>
+                        <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+                        <option value="PROJECT_MANAGER">PROJECT_MANAGER</option>
+                        <option value="VIEWER">VIEWER</option>
+                        <option value="REVIEWER">REVIEWER</option>
+                      </select>
+                    </label>
+                  )}
+
+                  <button type="submit" className={authTab === 'admin_register' ? 'danger' : 'primary'} style={{
+                    padding: '12px',
+                    fontSize: '0.95rem',
+                    marginTop: '12px',
+                    width: '100%'
+                  }}>
+                    {authTab === 'admin_register' ? 'Create Admin Account 🛡️' : 'Create Account'}
+                  </button>
+
+                  {authTab === 'admin_register' && (
+                    <div style={{ marginTop: '16px', textAlign: 'center', fontSize: '0.85rem', color: '#64748b' }}>
+                      Already have an admin account?{' '}
+                      <a 
+                        onClick={() => { setAuthTab('admin'); setAuthError('') }}
+                        style={{ color: '#ef4444', fontWeight: '700', cursor: 'pointer', textDecoration: 'underline' }}
+                      >
+                        Sign In
+                      </a>
+                    </div>
+                  )}
+                </form>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -1446,14 +1625,21 @@ function App() {
     const pendingProjects = totalProjects - completedProjects
     const hoursSaved = completedProjects * 6
 
-    const canCreate = currentUser && (currentUser.role === 'ADMIN' || currentUser.role === 'BUSINESS_ANALYST')
+    const canCreate = currentUser && (currentUser.role === 'ADMIN' || currentUser.role === 'BUSINESS_ANALYST' || currentUser.role === 'REVIEWER')
 
     return (
       <div className="dashboard-layout" style={{ display: 'flex', flexDirection: 'column', gap: '32px', width: '100%' }}>
         <section className="page">
           <div className="section-heading">
             <h2>Projects</h2>
-            <span className="badge">{totalProjects} active</span>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+              <span className="badge">{totalProjects} active</span>
+              {canCreate && (
+                <button className="primary" onClick={handleStartNewInterview} style={{ padding: '6px 14px', fontSize: '0.85rem' }}>
+                  + New Project
+                </button>
+              )}
+            </div>
           </div>
           <div 
             className="projects-grid" 
@@ -1671,21 +1857,23 @@ function App() {
     // Status banners
     const isApproved = projectData.status === 'APPROVED'
     const isInReview = projectData.status === 'IN_REVIEW'
+    const isLocked = isViewer || isApproved || isInReview
     
     return (
       <div className="interview-shell">
-        <div className="panel-header interview-header" style={{ borderLeft: `6px solid ${getStatusColor(projectData.status)}` }}>
+        {/* Sub-header Bar */}
+        <div className="panel-header interview-header" style={{ borderLeft: `6px solid ${getStatusColor(projectData.status)}`, padding: '12px 24px', background: '#ffffff', borderRadius: '12px', boxShadow: 'var(--shadow-sm)' }}>
           <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
             <button 
               className="secondary" 
               onClick={() => setActivePage('dashboard')}
-              style={{ padding: '8px 14px', fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+              style={{ padding: '8px 14px', fontSize: '0.9rem' }}
             >
               📋 All Projects
             </button>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <p className="eyebrow" style={{ margin: '0' }}>AI Interview</p>
+                <p className="eyebrow" style={{ margin: '0' }}>AI Workspace</p>
                 <span style={{
                   fontSize: '0.75rem',
                   fontWeight: '700',
@@ -1697,186 +1885,462 @@ function App() {
                   {projectData.status}
                 </span>
               </div>
-              <h2 style={{ marginTop: '4px' }}>{projectData.project?.name || 'Interview Workspace'}</h2>
+              <h2 style={{ marginTop: '4px', fontSize: '1.4rem' }}>{projectData.project?.name || 'Discovery Workshop'}</h2>
             </div>
           </div>
+          
           <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
             {projectData.status === 'DRAFT' && isOwnerOrAdmin && (
-              <button className="primary" style={{ backgroundColor: '#f59e0b' }} onClick={handleSubmitForReview}>
+              <button className="primary" style={{ backgroundColor: '#f59e0b', boxShadow: '0 4px 12px rgba(245, 158, 11, 0.2)' }} onClick={handleSubmitForReview}>
                 Submit for Review
               </button>
             )}
             <button className="secondary" onClick={() => setActivePage('review')}>
               Go to Review &amp; Export
             </button>
-            {currentUser?.role === 'ADMIN' && (
+            {(currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMIN') && (
               <button 
                 className="secondary" 
-                onClick={() => setActivePage('admin')} 
-                style={{ fontSize: '0.85rem', padding: '8px 16px', background: '#eff6ff', color: '#1e40af', border: '1px solid #bfdbfe', cursor: 'pointer' }}
+                onClick={() => {
+                  setActivePage('admin')
+                  window.history.pushState({}, '', '/admin')
+                }} 
+                style={{ fontSize: '0.85rem', padding: '8px 16px', background: '#eff6ff', color: '#1e40af', border: '1px solid #bfdbfe' }}
               >
                 🛡️ Admin Panel
               </button>
             )}
-            <div className="profile-pill" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', borderRadius: '12px', background: '#f8fafc', border: '1px solid #cbd5e1', padding: '6px 14px' }}>
+            <div className="profile-pill">
               <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#1e293b' }}>{currentUser?.name}</span>
-              <span style={{ fontSize: '0.7rem', fontWeight: '700', color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <span style={{ fontSize: '0.7rem', fontWeight: '700', color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 {currentUser && getRoleLabel(currentUser.role)}
               </span>
             </div>
-            <button className="secondary" onClick={handleLogout} style={{ fontSize: '0.85rem', padding: '8px 16px', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fecaca', cursor: 'pointer' }}>
+            <button className="secondary" onClick={handleLogout} style={{ fontSize: '0.85rem', padding: '8px 16px', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fecaca' }}>
               Sign Out 🚪
             </button>
           </div>
         </div>
 
-        <div className="workspace-grid" style={{ display: 'grid', gridTemplateColumns: '3fr 1.2fr', gap: '24px', marginTop: '20px' }}>
+        {/* Two Column Layout */}
+        <div className="unified-workspace-container">
           
-          {/* Main Chat Panel */}
-          <section className="panel chat-panel" style={{ height: 'fit-content' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ margin: '0' }}>Chat</h3>
-              {!isViewer && projectData.status === 'DRAFT' && (
-                <button 
-                  className="secondary" 
-                  onClick={handleClearConversation}
-                  style={{ fontSize: '0.85rem', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}
-                >
-                  🗑️ Clear Chat
-                </button>
-              )}
-            </div>
-            
-            {/* Status alerts */}
-            {isApproved && (
-              <div style={{ background: '#ecfdf5', border: '1px solid #d1fae5', color: '#065f46', padding: '12px', borderRadius: '10px', marginBottom: '14px', fontSize: '0.85rem' }}>
-                ✅ This project has been **APPROVED** by the Review Committee. Chat is now locked.
-              </div>
-            )}
-            {isInReview && (
-              <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', color: '#92400e', padding: '12px', borderRadius: '10px', marginBottom: '14px', fontSize: '0.85rem' }}>
-                ⏳ This project is currently **UNDER REVIEW**. Chat is temporarily locked.
-              </div>
-            )}
-
-            <div className="message-list" ref={messageListRef} style={{ minHeight: '400px', maxHeight: '55vh', overflowY: 'auto' }}>
-              {chatMessages.map((message, index) => (
-                <div key={`${message.role}-${index}`} className={`message ${message.role}`}>
-                  <strong>{message.role === 'ai' ? 'AI' : 'Customer'}</strong>
-                  <div>{parseContent(message.text)}</div>
-                </div>
-              ))}
-            </div>
-
-            {!isViewer && projectData.status === 'DRAFT' ? (
-              <>
-                <div className="suggestions">
-                  <span>Suggested questions</span>
-                  {['Existing software?', 'Number of users?', 'Reports?', 'Integrations?'].map((item) => (
-                    <button key={item} className="chip" onClick={() => setDraftInput(item)}>
-                      {item}
-                    </button>
-                  ))}
-                </div>
-
-                <form className="composer" onSubmit={handleSend}>
-                  <input
-                    value={draftInput}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) => setDraftInput(event.target.value)}
-                    placeholder="Type your answer..."
-                  />
-                  <button className="primary" type="submit" disabled={isLoading}>
-                    {isLoading ? 'Sending…' : 'Send'}
+          {/* Left Column: Chat Console */}
+          <div className="workspace-column">
+            <section className="chat-panel">
+              <div className="chat-panel-header">
+                <h3 style={{ fontSize: '1.1rem' }}>Conversational Agent</h3>
+                {!isLocked && (
+                  <button 
+                    className="secondary" 
+                    onClick={handleClearConversation}
+                    style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                  >
+                    🗑️ Reset Chat
                   </button>
-                </form>
-              </>
-            ) : (
-              <div style={{
-                background: '#f8fafc',
-                border: '1px solid #e2e8f0',
-                padding: '16px',
-                borderRadius: '12px',
-                color: '#64748b',
-                textAlign: 'center',
-                marginTop: '16px',
-                fontSize: '0.9rem',
-                fontWeight: '500'
-              }}>
-                🔒 {isViewer ? 'You have VIEW-ONLY access to this project.' : 'Chat is disabled during review/approval.'}
+                )}
               </div>
-            )}
-          </section>
-
-          {/* Members & Collaboration Panel */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            <section className="panel" style={{ background: '#ffffff', borderRadius: '20px', padding: '20px', border: '1px solid #e2e8f0' }}>
-              <h3 style={{ margin: '0 0 16px 0', color: '#1e293b' }}>Project Collaboration</h3>
               
-              {isOwnerOrAdmin ? (
-                <form onSubmit={handleInviteMember} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid #e2e8f0' }}>
-                  <label style={{ fontSize: '0.8rem', fontWeight: '700', color: '#475569', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    Invite User by Email
-                    <input 
-                      type="email" 
-                      value={inviteEmail} 
-                      onChange={e => setInviteEmail(e.target.value)}
-                      placeholder="colleague@company.com"
-                      required
-                      style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
-                    />
-                  </label>
-                  
-                  <label style={{ fontSize: '0.8rem', fontWeight: '700', color: '#475569', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    Project Role
-                    <select 
-                      value={inviteRole} 
-                      onChange={e => setInviteRole(e.target.value as ProjectMemberRole)}
-                      style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', fontSize: '0.85rem' }}
-                    >
-                      <option value="EDITOR">Editor (Can Chat & Edit)</option>
-                      <option value="VIEWER">Viewer (Read Only)</option>
-                    </select>
-                  </label>
-
-                  <button type="submit" className="primary" style={{ padding: '8px', borderRadius: '8px', fontSize: '0.85rem' }}>
-                    Invite Member
-                  </button>
-                </form>
-              ) : null}
-
-              <div>
-                <h4 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: '#475569' }}>Project Members</h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {/* Show Owner first */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '8px 12px', borderRadius: '8px' }}>
-                    <div>
-                      <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#1e293b' }}>
-                        {isOwnerOrAdmin && projectData.owner_id === currentUser?.id ? 'You' : 'Project Owner'}
-                      </div>
-                      <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Owner</div>
-                    </div>
-                    <span style={{ fontSize: '0.7rem', padding: '2px 6px', background: '#eff6ff', color: '#2563eb', borderRadius: '6px', fontWeight: '700' }}>OWNER</span>
-                  </div>
-
-                  {projectMembers.filter(m => m.role !== 'OWNER').map(m => (
-                    <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '8px 12px', borderRadius: '8px' }}>
-                      <div style={{ maxWidth: '140px', overflow: 'hidden' }}>
-                        <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#1e293b', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{m.name}</div>
-                        <div style={{ fontSize: '0.75rem', color: '#64748b', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{m.email}</div>
-                      </div>
-                      <span style={{ 
-                        fontSize: '0.7rem', 
-                        padding: '2px 6px', 
-                        background: m.role === 'EDITOR' ? '#f0fdf4' : '#f1f5f9', 
-                        color: m.role === 'EDITOR' ? '#166534' : '#475569', 
-                        borderRadius: '6px', 
-                        fontWeight: '700' 
-                      }}>
-                        {m.role}
-                      </span>
-                    </div>
-                  ))}
+              {/* Lock Warning Banners */}
+              {isApproved && (
+                <div style={{ background: '#ecfdf5', borderBottom: '1px solid #d1fae5', color: '#065f46', padding: '12px 24px', fontSize: '0.85rem' }}>
+                  ✅ This project has been <strong>APPROVED</strong> by the Review Committee. The workspace state is now archived and locked.
                 </div>
+              )}
+              {isInReview && (
+                <div style={{ background: '#fffbeb', borderBottom: '1px solid #fef3c7', color: '#92400e', padding: '12px 24px', fontSize: '0.85rem' }}>
+                  ⏳ This project is currently <strong>UNDER REVIEW</strong>. Editing and chat features are temporarily locked.
+                </div>
+              )}
+
+              {/* Message Feed */}
+              <div className="chat-messages-container" ref={messageListRef}>
+                {chatMessages.map((message, index) => (
+                  <div key={`${message.role}-${index}`} className={`message-bubble ${message.role}`}>
+                    <div className="message-bubble-header">
+                      <span>{message.role === 'ai' ? 'Discovery AI' : currentUser?.name || 'User'}</span>
+                    </div>
+                    <div>{parseContent(message.text)}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Composer Input Area */}
+              <div className="chat-composer-section">
+                {!isLocked ? (
+                  <>
+                    <div className="suggestions-chips">
+                      <span style={{ fontSize: '0.8rem', fontWeight: '700', color: 'var(--text-muted)', marginRight: '4px' }}>Suggestions:</span>
+                      {['Existing software?', 'Number of users?', 'Reporting needs?', 'Integrations?'].map((item) => (
+                        <button key={item} className="suggestion-chip" onClick={() => setDraftInput(item)}>
+                          {item}
+                        </button>
+                      ))}
+                    </div>
+
+                    <form className="composer-form" onSubmit={handleSend}>
+                      <input
+                        value={draftInput}
+                        onChange={(event: ChangeEvent<HTMLInputElement>) => setDraftInput(event.target.value)}
+                        placeholder="Type your response to the discovery agent..."
+                        disabled={isLoading}
+                      />
+                      <button className="primary" type="submit" disabled={isLoading || !draftInput.trim()}>
+                        {isLoading ? 'Processing…' : 'Send'}
+                      </button>
+                    </form>
+                  </>
+                ) : (
+                  <div style={{
+                    background: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    padding: '14px',
+                    borderRadius: '12px',
+                    color: 'var(--text-muted)',
+                    textAlign: 'center',
+                    fontSize: '0.9rem',
+                    fontWeight: '500'
+                  }}>
+                    🔒 {isViewer ? 'You have READ-ONLY permissions.' : 'Chat is locked while project is under review.'}
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>
+
+          {/* Right Column: Project Control Center Editor */}
+          <div className="workspace-column">
+            <section className="editor-panel">
+              {/* Tab Selector */}
+              <div className="editor-tabs-bar">
+                <button 
+                  className={`editor-tab-button ${activeWorkspaceTab === 'details' ? 'active' : ''}`}
+                  onClick={() => setActiveWorkspaceTab('details')}
+                >
+                  Project Details
+                </button>
+                <button 
+                  className={`editor-tab-button ${activeWorkspaceTab === 'discovery' ? 'active' : ''}`}
+                  onClick={() => setActiveWorkspaceTab('discovery')}
+                >
+                  Discovery
+                </button>
+                <button 
+                  className={`editor-tab-button ${activeWorkspaceTab === 'overview' ? 'active' : ''}`}
+                  onClick={() => setActiveWorkspaceTab('overview')}
+                >
+                  Overview &amp; Scope
+                </button>
+                <button 
+                  className={`editor-tab-button ${activeWorkspaceTab === 'requirements' ? 'active' : ''}`}
+                  onClick={() => setActiveWorkspaceTab('requirements')}
+                >
+                  Requirements ({projectData.functional_requirements?.length || 0})
+                </button>
+                <button 
+                  className={`editor-tab-button ${activeWorkspaceTab === 'members' ? 'active' : ''}`}
+                  onClick={() => setActiveWorkspaceTab('members')}
+                >
+                  Team
+                </button>
+              </div>
+
+              {/* Tab Contents */}
+              <div className="editor-content-area">
+                
+                {/* 1. Details Tab */}
+                {activeWorkspaceTab === 'details' && (
+                  <div className="editor-section-card">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h3>Core Project Details</h3>
+                      <span className="sync-status-indicator" style={{ color: 'var(--success)' }}>🟢 Live-Syncing</span>
+                    </div>
+                    
+                    <label>
+                      Project Name
+                      <input 
+                        value={projectData.project?.name || ''} 
+                        onChange={(e) => updateField('project', 'name', e.target.value)}
+                        placeholder="e.g. ERP Gateway Integration"
+                        disabled={isLocked}
+                      />
+                    </label>
+
+                    <label>
+                      Department
+                      <input 
+                        value={projectData.project?.department || ''} 
+                        onChange={(e) => updateField('project', 'department', e.target.value)}
+                        placeholder="e.g. Global Logistics"
+                        disabled={isLocked}
+                      />
+                    </label>
+
+                    <label>
+                      Business Unit / Industry Domain
+                      <input 
+                        value={projectData.project?.business_unit || ''} 
+                        onChange={(e) => updateField('project', 'business_unit', e.target.value)}
+                        placeholder="e.g. Manufacturing / Supply Chain"
+                        disabled={isLocked}
+                      />
+                    </label>
+
+                    <label>
+                      Project Sponsor
+                      <input 
+                        value={projectData.project?.sponsor || ''} 
+                        onChange={(e) => updateField('project', 'sponsor', e.target.value)}
+                        placeholder="e.g. VP of Operations"
+                        disabled={isLocked}
+                      />
+                    </label>
+
+                    <label>
+                      Expected Completion Date (Timeline)
+                      <input 
+                        value={projectData.project?.expected_completion || ''} 
+                        onChange={(e) => updateField('project', 'expected_completion', e.target.value)}
+                        placeholder="e.g. Q4 2026 or YYYY-MM-DD"
+                        disabled={isLocked}
+                      />
+                    </label>
+                  </div>
+                )}
+
+                {/* 2. Discovery Tab */}
+                {activeWorkspaceTab === 'discovery' && (
+                  <div className="editor-section-card">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h3>Requirement Discovery Context</h3>
+                      <span className="sync-status-indicator" style={{ color: 'var(--success)' }}>🟢 Live-Syncing</span>
+                    </div>
+
+                    <label>
+                      Business Problem Statement
+                      <textarea 
+                        value={projectData.discovery?.business_problem || ''} 
+                        onChange={(e) => updateField('discovery', 'business_problem', e.target.value)}
+                        placeholder="Describe the issue or pain points this project solves..."
+                        disabled={isLocked}
+                      />
+                    </label>
+
+                    <label>
+                      Business Goals
+                      <textarea 
+                        value={projectData.discovery?.business_goals || ''} 
+                        onChange={(e) => updateField('discovery', 'business_goals', e.target.value)}
+                        placeholder="What are the strategic business goals of this effort?"
+                        disabled={isLocked}
+                      />
+                    </label>
+
+                    <label>
+                      Desired Outcomes
+                      <textarea 
+                        value={projectData.discovery?.desired_outcomes || ''} 
+                        onChange={(e) => updateField('discovery', 'desired_outcomes', e.target.value)}
+                        placeholder="What tangible, measurable outcomes are expected?"
+                        disabled={isLocked}
+                      />
+                    </label>
+
+                    <label>
+                      Project Budget &amp; Resource Availability
+                      <input 
+                        value={projectData.discovery?.budget || ''} 
+                        onChange={(e) => updateField('discovery', 'budget', e.target.value)}
+                        placeholder="e.g. $150K / 4 Dedicated Software Engineers"
+                        disabled={isLocked}
+                      />
+                    </label>
+                  </div>
+                )}
+
+                {/* 3. Scope & Constraints Tab */}
+                {activeWorkspaceTab === 'overview' && (
+                  <div className="editor-section-card">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h3>System Scope &amp; Constraints</h3>
+                      <span className="sync-status-indicator" style={{ color: 'var(--success)' }}>🟢 Live-Syncing</span>
+                    </div>
+
+                    <label>
+                      General Project Overview Description
+                      <textarea 
+                        value={projectData.overview?.description || ''} 
+                        onChange={(e) => updateField('overview', 'description', e.target.value)}
+                        placeholder="Summarize the core scope and system definition..."
+                        disabled={isLocked}
+                      />
+                    </label>
+
+                    <label>
+                      Key Stakeholders (Comma separated)
+                      <textarea 
+                        value={projectData.overview?.stakeholders?.join(', ') || ''} 
+                        onChange={(e) => updateField('overview', 'stakeholders', e.target.value.split(',').map(s => s.trim()))}
+                        placeholder="e.g. Product Manager, Technical Lead, Security Auditor"
+                        disabled={isLocked}
+                        style={{ minHeight: '60px' }}
+                      />
+                    </label>
+
+                    <label>
+                      System Integrations (Comma separated)
+                      <textarea 
+                        value={projectData.discovery?.integrations?.join(', ') || ''} 
+                        onChange={(e) => updateField('discovery', 'integrations', e.target.value.split(',').map(s => s.trim()))}
+                        placeholder="e.g. ActiveDirectory SSO, Stripe Gateway, Salesforce API"
+                        disabled={isLocked}
+                        style={{ minHeight: '60px' }}
+                      />
+                    </label>
+
+                    <label>
+                      Constraints &amp; Non-Functional Requirements
+                      <textarea 
+                        value={projectData.discovery?.constraints || ''} 
+                        onChange={(e) => updateField('discovery', 'constraints', e.target.value)}
+                        placeholder="Describe constraints like security policies, regulations, latency..."
+                        disabled={isLocked}
+                      />
+                    </label>
+                  </div>
+                )}
+
+                {/* 4. Functional Requirements Tab */}
+                {activeWorkspaceTab === 'requirements' && (
+                  <div className="requirements-tab-layout">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h3>Functional Requirements Cards</h3>
+                      {!isLocked && (
+                        <button className="primary" onClick={handleAddRequirement} style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
+                          ➕ Add Card
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="requirement-list-container">
+                      {projectData.functional_requirements && projectData.functional_requirements.length > 0 ? (
+                        projectData.functional_requirements.map((item, index) => (
+                          <div key={index} className="requirement-editor-row">
+                            <input 
+                              value={item.title || ''} 
+                              onChange={(e) => handleUpdateRequirement(index, 'title', e.target.value)}
+                              placeholder="Requirement description..."
+                              disabled={isLocked}
+                              style={{ border: 'none', background: 'transparent', padding: '4px' }}
+                            />
+                            
+                            <select 
+                              value={item.priority || 'Medium'} 
+                              onChange={(e) => handleUpdateRequirement(index, 'priority', e.target.value)}
+                              disabled={isLocked}
+                              style={{ padding: '4px 8px', borderRadius: '6px' }}
+                            >
+                              <option value="High">🔴 High</option>
+                              <option value="Medium">🟡 Medium</option>
+                              <option value="Low">🟢 Low</option>
+                            </select>
+
+                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+                              Confidence: <strong>{(item.confidence * 100).toFixed(0)}%</strong>
+                            </div>
+
+                            {!isLocked && (
+                              <button 
+                                className="requirement-delete-btn" 
+                                onClick={() => handleDeleteRequirement(index)}
+                                title="Delete Requirement"
+                              >
+                                🗑️
+                              </button>
+                            )}
+                          </div>
+                        ))
+                      ) : (
+                        <p style={{ fontStyle: 'italic', color: 'var(--text-muted)', textAlign: 'center', padding: '24px' }}>
+                          No functional requirements captured yet. Use the chat agent to discover requirements or click Add Card.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* 5. Team Tab */}
+                {activeWorkspaceTab === 'members' && (
+                  <div className="editor-section-card">
+                    <h3>Project Collaboration</h3>
+                    
+                    {isOwnerOrAdmin && !isLocked ? (
+                      <form onSubmit={handleInviteMember} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid #e2e8f0' }}>
+                        <label style={{ gap: '4px' }}>
+                          Invite User by Email
+                          <input 
+                            type="email" 
+                            value={inviteEmail} 
+                            onChange={e => setInviteEmail(e.target.value)}
+                            placeholder="colleague@company.com"
+                            required
+                          />
+                        </label>
+                        
+                        <label style={{ gap: '4px' }}>
+                          Project Role
+                          <select 
+                            value={inviteRole} 
+                            onChange={e => setInviteRole(e.target.value as ProjectMemberRole)}
+                            style={{ background: 'white' }}
+                          >
+                            <option value="EDITOR">Editor (Can Chat &amp; Edit)</option>
+                            <option value="VIEWER">Viewer (Read Only)</option>
+                          </select>
+                        </label>
+
+                        <button type="submit" className="primary" style={{ padding: '8px', fontSize: '0.85rem' }}>
+                          Invite Member
+                        </button>
+                      </form>
+                    ) : null}
+
+                    <div>
+                      <h4 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: 'var(--text-muted)' }}>Project Members List</h4>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {/* Show Owner first */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '8px 12px', borderRadius: '8px' }}>
+                          <div>
+                            <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#1e293b' }}>
+                              {isOwnerOrAdmin && projectData.owner_id === currentUser?.id ? 'You' : 'Project Owner'}
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Creator</div>
+                          </div>
+                          <span className="badge">OWNER</span>
+                        </div>
+
+                        {projectMembers.filter(m => m.role !== 'OWNER').map(m => (
+                          <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '8px 12px', borderRadius: '8px' }}>
+                            <div style={{ maxWidth: '180px', overflow: 'hidden' }}>
+                              <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#1e293b', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{m.name}</div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{m.email}</div>
+                            </div>
+                            <span style={{ 
+                              fontSize: '0.7rem', 
+                              padding: '2px 6px', 
+                              background: m.role === 'EDITOR' ? '#f0fdf4' : '#f1f5f9', 
+                              color: m.role === 'EDITOR' ? '#166534' : '#475569', 
+                              borderRadius: '6px', 
+                              fontWeight: '700' 
+                            }}>
+                              {m.role}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </section>
           </div>
@@ -2001,31 +2465,119 @@ function App() {
             )}
 
             <div className="preview-card" style={{ marginTop: '32px' }}>
-              <div className="preview-heading">
-                <h3>Document Preview</h3>
-                <span className="badge">HTML preview</span>
+              <div className="preview-heading" style={{ marginBottom: '16px' }}>
+                <h3>Formal Discovery Document Preview</h3>
+                <span className="badge success">Ready for Review</span>
               </div>
-              <div className="preview-pages">
-                <div className="preview-page">
-                  <h4>Requirement Discovery Form</h4>
-                  <p>{projectData.project?.name || <em style={{ color: '#aaa' }}>No project name</em>}</p>
-                  <p>{projectData.overview?.description || <em style={{ color: '#aaa' }}>No description</em>}</p>
+              
+              <div className="document-sheet-preview-container">
+                {/* Page 1: Title & Core Context */}
+                <div className="document-sheet-page">
+                  <div className="document-header-deco">
+                    <h3>PROJECT REQUIREMENTS INTAKE DOCUMENT</h3>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: '2px' }}>
+                      Final Discovery Report (FDR) - Generated by AI Discovery Agent
+                    </p>
+                  </div>
+
+                  <section>
+                    <h4 style={{ color: 'var(--primary)', marginBottom: '14px', fontSize: '1.05rem', borderBottom: '1px solid var(--border-light)', paddingBottom: '4px' }}>
+                      1. Core Project Metadata
+                    </h4>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                      <div className="document-field-block">
+                        <strong>Project Name</strong>
+                        <p>{projectData.project?.name || <em style={{ color: '#aaa' }}>Unspecified</em>}</p>
+                      </div>
+                      <div className="document-field-block">
+                        <strong>Department / Business Unit</strong>
+                        <p>
+                          {projectData.project?.department || 'Unspecified'} 
+                          {projectData.project?.business_unit ? ` (${projectData.project.business_unit})` : ''}
+                        </p>
+                      </div>
+                      <div className="document-field-block">
+                        <strong>Project Sponsor</strong>
+                        <p>{projectData.project?.sponsor || <em style={{ color: '#aaa' }}>Unspecified</em>}</p>
+                      </div>
+                      <div className="document-field-block">
+                        <strong>Timeline &amp; Expected Completion</strong>
+                        <p>{projectData.project?.expected_completion || <em style={{ color: '#aaa' }}>Unspecified</em>}</p>
+                      </div>
+                      <div className="document-field-block" style={{ gridColumn: 'span 2' }}>
+                        <strong>Estimated Budget &amp; Resource allocation</strong>
+                        <p>{projectData.discovery?.budget || <em style={{ color: '#aaa' }}>Unspecified</em>}</p>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section style={{ marginTop: '24px' }}>
+                    <h4 style={{ color: 'var(--primary)', marginBottom: '14px', fontSize: '1.05rem', borderBottom: '1px solid var(--border-light)', paddingBottom: '4px' }}>
+                      2. Project Context &amp; Objectives
+                    </h4>
+                    <div className="document-field-block">
+                      <strong>Executive Summary &amp; Overview</strong>
+                      <p>{projectData.overview?.description || <em style={{ color: '#aaa' }}>Not captured yet</em>}</p>
+                    </div>
+                    <div className="document-field-block">
+                      <strong>Target Stakeholders</strong>
+                      <p>{projectData.overview?.stakeholders?.join(', ') || <em style={{ color: '#aaa' }}>Not captured yet</em>}</p>
+                    </div>
+                    <div className="document-field-block">
+                      <strong>Business Problem Statement</strong>
+                      <p>{projectData.discovery?.business_problem || <em style={{ color: '#aaa' }}>Not captured yet</em>}</p>
+                    </div>
+                    <div className="document-field-block">
+                      <strong>Strategic Business Goals</strong>
+                      <p>{projectData.discovery?.business_goals || <em style={{ color: '#aaa' }}>Not captured yet</em>}</p>
+                    </div>
+                  </section>
                 </div>
-                <div className="preview-page">
-                  <h4>Page 2</h4>
-                  <p>{projectData.discovery?.business_problem || <em style={{ color: '#aaa' }}>No business problem</em>}</p>
-                  <p>{projectData.discovery?.business_goals || <em style={{ color: '#aaa' }}>No business goals</em>}</p>
-                </div>
-                <div className="preview-page">
-                  <h4>Page 3</h4>
-                  <p>
-                    Requirements:{' '}
-                    {projectData.functional_requirements && projectData.functional_requirements.length > 0 ? (
-                      projectData.functional_requirements.map((item) => item.title).join(', ')
-                    ) : (
-                      <em style={{ color: '#aaa' }}>No requirements captured</em>
-                    )}
-                  </p>
+
+                {/* Page 2: Scope & Functional Requirements */}
+                <div className="document-sheet-page">
+                  <div className="document-header-deco">
+                    <h3>SYSTEM SCOPE &amp; SPECIFICATIONS</h3>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: '2px' }}>
+                      FDR Specifications Section
+                    </p>
+                  </div>
+
+                  <section>
+                    <h4 style={{ color: 'var(--primary)', marginBottom: '14px', fontSize: '1.05rem', borderBottom: '1px solid var(--border-light)', paddingBottom: '4px' }}>
+                      3. Technical Integration &amp; NFRs
+                    </h4>
+                    <div className="document-field-block">
+                      <strong>Third-Party Integrations</strong>
+                      <p>{projectData.discovery?.integrations?.join(', ') || <em style={{ color: '#aaa' }}>None specified</em>}</p>
+                    </div>
+                    <div className="document-field-block">
+                      <strong>Constraints &amp; Non-Functional Requirements</strong>
+                      <p>{projectData.discovery?.constraints || <em style={{ color: '#aaa' }}>None specified</em>}</p>
+                    </div>
+                  </section>
+
+                  <section style={{ marginTop: '24px' }}>
+                    <h4 style={{ color: 'var(--primary)', marginBottom: '14px', fontSize: '1.05rem', borderBottom: '1px solid var(--border-light)', paddingBottom: '4px' }}>
+                      4. Scope &amp; Functional Requirements Checklist
+                    </h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {projectData.functional_requirements && projectData.functional_requirements.length > 0 ? (
+                        projectData.functional_requirements.map((item, index) => (
+                          <div key={index} style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '6px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem' }}>
+                              <strong>FDR-REQ-{String(index + 1).padStart(3, '0')}: {item.title}</strong>
+                              <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: item.priority === 'High' ? 'var(--danger)' : 'var(--text-muted)' }}>
+                                Priority: {item.priority}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <p style={{ fontStyle: 'italic', color: '#aaa' }}>No functional requirements captured in workspace yet.</p>
+                      )}
+                    </div>
+                  </section>
                 </div>
               </div>
             </div>
@@ -2330,6 +2882,21 @@ function App() {
     }
   }
 
+  if (activePage === 'admin' && currentUser && (currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'ADMIN')) {
+    return (
+      <AdminPortal 
+        token={token!} 
+        currentUser={currentUser} 
+        onLogout={handleLogout} 
+        onSwitchMode={() => {
+          setActivePage('dashboard')
+          window.history.pushState({}, '', '/')
+        }}
+        projectsCount={projectsList.length}
+      />
+    )
+  }
+
   return (
     <div className="app-shell">
       {activePage !== 'interview' && (
@@ -2339,10 +2906,13 @@ function App() {
             <h2 style={{ margin: '4px 0 0 0' }}>Business Analyst Workshop</h2>
           </div>
           <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
-            {currentUser?.role === 'ADMIN' && (
+            {(currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMIN') && (
               <button 
                 className="secondary" 
-                onClick={() => setActivePage('admin')} 
+                onClick={() => {
+                  setActivePage('admin')
+                  window.history.pushState({}, '', '/admin')
+                }} 
                 style={{ fontSize: '0.85rem', padding: '8px 16px', background: '#eff6ff', color: '#1e40af', border: '1px solid #bfdbfe', cursor: 'pointer' }}
               >
                 🛡️ Admin Panel
@@ -2367,7 +2937,6 @@ function App() {
           {activePage === 'interview' && renderInterview()}
           {activePage === 'review' && renderReview()}
           {activePage === 'export' && renderExport()}
-          {activePage === 'admin' && renderAdmin()}
         </main>
       </div>
     </div>

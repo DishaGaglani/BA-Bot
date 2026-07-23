@@ -10,13 +10,17 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database import Base
 
 class UserRole(str, enum.Enum):
+    SUPER_ADMIN = "SUPER_ADMIN"
     ADMIN = "ADMIN"
     BUSINESS_ANALYST = "BUSINESS_ANALYST"
+    PROJECT_MANAGER = "PROJECT_MANAGER"
+    VIEWER = "VIEWER"
     REVIEWER = "REVIEWER"
 
 class ProjectMemberRole(str, enum.Enum):
-    OWNER = "OWNER"
-    EDITOR = "EDITOR"
+    PROJECT_MANAGER = "PROJECT_MANAGER"
+    BUSINESS_ANALYST = "BUSINESS_ANALYST"
+    CONTRIBUTOR = "CONTRIBUTOR"
     VIEWER = "VIEWER"
 
 class User(Base):
@@ -27,6 +31,9 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
     role = Column(SqlEnum(UserRole), default=UserRole.BUSINESS_ANALYST, nullable=False)
+    department = Column(String, default="IT", nullable=True)
+    status = Column(String, default="ACTIVE", nullable=True)
+    last_login = Column(DateTime, default=datetime.datetime.utcnow, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
 
     # Relationships
@@ -42,6 +49,13 @@ class Project(Base):
     name = Column(String, nullable=False)
     status = Column(String, default="DRAFT", nullable=False)  # DRAFT, IN_REVIEW, APPROVED, REJECTED
     session_id = Column(String, unique=True, index=True, nullable=True)
+    description = Column(Text, nullable=True)
+    department = Column(String, nullable=True)
+    business_unit = Column(String, nullable=True)
+    priority = Column(String, default="MEDIUM", nullable=True)
+    start_date = Column(DateTime, nullable=True)
+    end_date = Column(DateTime, nullable=True)
+    tags = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
     data = Column(Text, nullable=True)

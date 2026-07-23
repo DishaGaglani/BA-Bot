@@ -92,9 +92,27 @@ def login(payload: UserLoginRequest, db: Session = Depends(get_db)):
             detail="Invalid email or password"
         )
     
+    # Check if user is disabled
+    if hasattr(user, "status") and user.status == "DISABLED":
+        log_action(
+            db=db,
+            user_id=user.id,
+            action="permission denied",
+            metadata={"reason": "Disabled account tried to login", "email": user.email}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account has been disabled. Please contact the administrator."
+        )
+
     # Generate token
     token_data = {"sub": user.email, "role": user.role.value, "uid": user.id}
     token = create_access_token(data=token_data)
+    
+    # Update last login time
+    import datetime
+    user.last_login = datetime.datetime.utcnow()
+    db.commit()
     
     # Log successful login
     log_action(

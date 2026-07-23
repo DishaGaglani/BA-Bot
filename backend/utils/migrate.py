@@ -116,11 +116,11 @@ def run_migration():
                     )
                     db.add(new_project)
                     
-                    # Insert ProjectMember OWNER
+                    # Insert ProjectMember PROJECT_MANAGER
                     member = ProjectMember(
                         project_id=old_id,
                         user_id=admin_user_id,
-                        role=ProjectMemberRole.OWNER
+                        role=ProjectMemberRole.PROJECT_MANAGER
                     )
                     db.add(member)
             
@@ -139,28 +139,51 @@ def run_migration():
             print("Initializing database schema...")
             Base.metadata.create_all(bind=engine)
             
-        # Ensure new columns exist in projects
+        # Ensure new columns exist in projects and users
         if os.path.exists(db_path):
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
+            
+            # Add new project and user columns
+            for table, col, col_def in [
+                ("projects", "summary", "TEXT"),
+                ("projects", "structured_state", "TEXT"),
+                ("projects", "description", "TEXT"),
+                ("projects", "department", "TEXT"),
+                ("projects", "business_unit", "TEXT"),
+                ("projects", "priority", "TEXT DEFAULT 'MEDIUM'"),
+                ("projects", "start_date", "TEXT"),
+                ("projects", "end_date", "TEXT"),
+                ("projects", "tags", "TEXT"),
+                ("users", "department", "TEXT DEFAULT 'IT'"),
+                ("users", "status", "TEXT DEFAULT 'ACTIVE'"),
+                ("users", "last_login", "TEXT")
+            ]:
+                try:
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_def};")
+                    print(f"Added column '{col}' to {table} table.")
+                except sqlite3.OperationalError:
+                    pass
+
+            # Update existing roles in project_members table
             try:
-                cursor.execute("ALTER TABLE projects ADD COLUMN summary TEXT;")
-                print("Added column 'summary' to projects table.")
-            except sqlite3.OperationalError:
-                pass
-            try:
-                cursor.execute("ALTER TABLE projects ADD COLUMN structured_state TEXT;")
-                print("Added column 'structured_state' to projects table.")
-            except sqlite3.OperationalError:
-                pass
+                cursor.execute("UPDATE project_members SET role = 'PROJECT_MANAGER' WHERE role = 'OWNER';")
+                cursor.execute("UPDATE project_members SET role = 'CONTRIBUTOR' WHERE role = 'EDITOR';")
+                print("Migrated old project membership roles ('OWNER' -> 'PROJECT_MANAGER', 'EDITOR' -> 'CONTRIBUTOR') in database.")
+            except sqlite3.OperationalError as e:
+                print(f"Warning during member role migration: {str(e)}")
+
             conn.commit()
             conn.close()
             
         # Seed test users
         print("Ensuring default system users for all roles exist...")
         users_to_seed = [
+            ("Super Admin", "superadmin@example.com", "admin123", UserRole.SUPER_ADMIN),
             ("Admin User", "admin@example.com", "admin123", UserRole.ADMIN),
             ("Business Analyst", "ba@example.com", "ba123", UserRole.BUSINESS_ANALYST),
+            ("Project Manager", "pm@example.com", "pm123", UserRole.PROJECT_MANAGER),
+            ("Viewer User", "viewer@example.com", "viewer123", UserRole.VIEWER),
             ("Reviewer User", "reviewer@example.com", "reviewer123", UserRole.REVIEWER)
         ]
         for name, email, password, role in users_to_seed:

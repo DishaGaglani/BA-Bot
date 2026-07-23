@@ -173,7 +173,10 @@ def get_legacy_payload(project: Project) -> dict:
             "business_problem": state.get("business_problem") or "",
             "business_goals": state.get("business_goals") or "",
             "desired_outcomes": state.get("desired_outcomes") or "",
-            "constraints": state.get("constraints") or ""
+            "constraints": state.get("constraints") or "",
+            "budget": state.get("budget") or "",
+            "integrations": state.get("integrations") or [],
+            "non_functional_requirements": state.get("non_functional_requirements") or ""
         },
         "functional_requirements": reqs,
         "missing_fields": gaps["missing_fields"],

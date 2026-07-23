@@ -65,7 +65,7 @@ def list_projects(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if current_user.role == UserRole.ADMIN:
+    if current_user.role in [UserRole.SUPER_ADMIN, UserRole.ADMIN]:
         db_projects = db.query(Project).options(joinedload(Project.messages)).all()
     else:
         # Get projects where user is owner or invited member
@@ -100,17 +100,17 @@ def create_project(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if current_user.role not in [UserRole.ADMIN, UserRole.BUSINESS_ANALYST]:
+    if current_user.role not in [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.BUSINESS_ANALYST, UserRole.PROJECT_MANAGER, UserRole.REVIEWER]:
         # Log unauthorized attempt
         log_action(
             db=db,
             user_id=current_user.id,
             action="permission denied",
-            metadata={"reason": "Role reviewer tried to create project"}
+            metadata={"reason": f"Role {current_user.role.value} tried to create project"}
         )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only Business Analysts and Admins can create projects"
+            detail="Only Admins, Business Analysts, Project Managers, and Reviewers can create projects"
         )
 
     import uuid
@@ -143,7 +143,7 @@ def create_project(
     member = ProjectMember(
         project_id=db_project.id,
         user_id=current_user.id,
-        role=ProjectMemberRole.OWNER
+        role=ProjectMemberRole.PROJECT_MANAGER
     )
     db.add(member)
     db.commit()
@@ -163,7 +163,7 @@ def create_project(
 def update_project(
     project_id: int,
     payload: ProjectPayload,
-    project: Project = Depends(require_project_access(ProjectMemberRole.EDITOR)),
+    project: Project = Depends(require_project_access(ProjectMemberRole.CONTRIBUTOR)),
     db: Session = Depends(get_db)
 ):
     # Preserve existing sessionId if update payload lacks one
@@ -190,17 +190,21 @@ def update_project(
     state["department"] = payload.project.department
     state["sponsor"] = payload.project.sponsor
     state["business_unit"] = payload.project.business_unit
+    state["industry"] = payload.project.business_unit
     state["timeline"] = payload.project.expected_completion
     
     if isinstance(payload.overview, dict):
-        state["overview_description"] = payload.overview.get("description", "")
-        state["stakeholders"] = payload.overview.get("stakeholders", [])
+      state["overview_description"] = payload.overview.get("description", "")
+      state["stakeholders"] = payload.overview.get("stakeholders", [])
         
     if isinstance(payload.discovery, dict):
-        state["business_problem"] = payload.discovery.get("business_problem", "")
-        state["business_goals"] = payload.discovery.get("business_goals", "")
-        state["desired_outcomes"] = payload.discovery.get("desired_outcomes", "")
-        state["constraints"] = payload.discovery.get("constraints", "")
+      state["business_problem"] = payload.discovery.get("business_problem", "")
+      state["business_goals"] = payload.discovery.get("business_goals", "")
+      state["desired_outcomes"] = payload.discovery.get("desired_outcomes", "")
+      state["constraints"] = payload.discovery.get("constraints", "")
+      state["budget"] = payload.discovery.get("budget", "")
+      state["integrations"] = payload.discovery.get("integrations", [])
+      state["non_functional_requirements"] = payload.discovery.get("non_functional_requirements", "")
         
     # Map functional requirements
     state["functional_requirements"] = [
@@ -313,7 +317,7 @@ def export_project(
 @router.post("/{project_id}/submit")
 def submit_project(
     project_id: int,
-    project: Project = Depends(require_project_access(ProjectMemberRole.EDITOR)),
+    project: Project = Depends(require_project_access(ProjectMemberRole.CONTRIBUTOR)),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
