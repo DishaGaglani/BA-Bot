@@ -26,7 +26,7 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 # Disable SSL Warnings for self-signed certificates or proxy contexts
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-PREDICTION_URL = "https://forjinn.com/api/v1/prediction/249fc96e-5b62-4208-8787-0d77367e9eaf"
+PREDICTION_URL = os.getenv("PREDICTION_URL", "https://forjinn.com/api/v1/prediction/249fc96e-5b62-4208-8787-0d77367e9eaf")
 
 class RequirementPayload(BaseModel):
     title: str
@@ -68,9 +68,12 @@ def list_projects(
     if current_user.role in [UserRole.SUPER_ADMIN, UserRole.ADMIN]:
         db_projects = db.query(Project).options(joinedload(Project.messages)).all()
     else:
-        # Get projects where user is owner or invited member
-        db_projects = db.query(Project).options(joinedload(Project.messages)).outerjoin(ProjectMember).filter(
-            (Project.owner_id == current_user.id) | (ProjectMember.user_id == current_user.id)
+        from models import TeamProject
+        cond = (Project.owner_id == current_user.id) | (ProjectMember.user_id == current_user.id)
+        if current_user.team_id is not None:
+            cond = cond | (TeamProject.team_id == current_user.team_id)
+        db_projects = db.query(Project).options(joinedload(Project.messages)).outerjoin(ProjectMember).outerjoin(TeamProject, TeamProject.project_id == Project.id).filter(
+            cond
         ).distinct().all()
     
     result = []
@@ -374,6 +377,7 @@ def publish_project(
         raise HTTPException(status_code=400, detail="Only approved requirements can be published.")
         
     project.status = "PUBLISHED"
+    project.locked = True
     db.commit()
     
     log_action(

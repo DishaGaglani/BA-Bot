@@ -2,7 +2,9 @@ import datetime
 import bcrypt
 import jwt
 
-SECRET_KEY = "development_secret_key_change_me_in_production"
+import os
+
+SECRET_KEY = os.getenv("JWT_SECRET", "development_secret_key_change_me_in_production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 hours
 

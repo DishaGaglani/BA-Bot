@@ -6,7 +6,7 @@ import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from models import User, UserRole, AuditLog, Project, Message, ProjectMember, ProjectMemberRole, Team, TeamProject
+from models import User, UserRole, AuditLog, Project, Message, ProjectMember, ProjectMemberRole, Team, TeamProject, DiscoverySection
 from dependencies.auth import get_current_user, get_db, require_role
 from services.rbac_service import get_role_permissions_matrix, update_role_permissions_matrix
 
@@ -639,6 +639,29 @@ def archive_admin_project(
         metadata={"archived_by": current_user.email}
     )
     return {"status": "ok", "message": "Project archived successfully."}
+
+@router.put("/projects/{project_id}/restore")
+def restore_admin_project(
+    project_id: int,
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    db: Session = Depends(get_db)
+):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    project.status = "DRAFT"
+    db.commit()
+    
+    from services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="project restored",
+        project_id=project.id,
+        metadata={"restored_by": current_user.email}
+    )
+    return {"status": "ok", "message": "Project restored successfully."}
 
 @router.put("/projects/{project_id}/transfer-ownership")
 def transfer_admin_project_ownership(

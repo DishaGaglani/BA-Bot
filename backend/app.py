@@ -5,6 +5,11 @@ import os
 import sys
 import uuid
 import time
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException, Depends, status, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -128,7 +133,7 @@ app.include_router(auth.routes.router)
 app.include_router(routes.projects.router)
 app.include_router(routes.admin.router)
 
-PREDICTION_URL = "https://forjinn.com/api/v1/prediction/249fc96e-5b62-4208-8787-0d77367e9eaf"
+PREDICTION_URL = os.getenv("PREDICTION_URL", "https://forjinn.com/api/v1/prediction/249fc96e-5b62-4208-8787-0d77367e9eaf")
 
 # Health check route
 @app.get("/health")
@@ -203,8 +208,9 @@ def predict(
     
     # 6. Build optimized prompt
     optimized_prompt = build_optimized_prompt(
-        project=project,
+        state=state,
         gap_analysis=gaps,
+        summary=project.summary,
         active_history=active_history,
         current_query=payload.question
     )
@@ -295,4 +301,7 @@ def predict(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "8000"))
+    reload = os.getenv("ENV", "development") != "production"
+    uvicorn.run("app:app", host=host, port=port, reload=reload)

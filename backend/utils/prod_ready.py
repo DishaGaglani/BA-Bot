@@ -5,11 +5,15 @@ import time
 import json
 import logging
 import requests
+from dotenv import load_dotenv
 from fastapi import Request, Response, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.orm import Session
 from database import SessionLocal
+
+# Load environment variables
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -46,11 +50,15 @@ def validate_environment():
     
     # 1. JWT Secret
     jwt_secret = os.getenv("JWT_SECRET")
-    if not jwt_secret:
-        if os.getenv("ENV") == "production":
+    if os.getenv("ENV") == "production":
+        if not jwt_secret:
             logger.critical("CRITICAL: JWT_SECRET environment variable is missing in production environment!", extra={"traceId": "startup"})
             sys.exit(1)
-        else:
+        if len(jwt_secret) < 32 or jwt_secret == "development_secret_key_change_me_in_production":
+            logger.critical("CRITICAL: JWT_SECRET is insecure in production environment!", extra={"traceId": "startup"})
+            sys.exit(1)
+    else:
+        if not jwt_secret:
             logger.warning("Warning: JWT_SECRET is not set. Using default developer configurations.", extra={"traceId": "startup"})
             
     # 2. Database validation

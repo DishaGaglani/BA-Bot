@@ -31,10 +31,3 @@ This folder contains the single-page React frontend application for the BA-Bot r
    npm run preview
    ```
 
-## 📂 Key Code Structure
-
-*   [App.tsx](file:///Users/dishagaglani/Desktop/L&T%20PES/BA_BOT/ba-agent/frontend/src/App.tsx): Contains the main routing, application state, and views (Dashboard, Interview, Review, Export).
-*   [App.css](file:///Users/dishagaglani/Desktop/L&T%20PES/BA_BOT/ba-agent/frontend/src/App.css): Stores layout styles, color palettes, animations, and typography rules.
-*   [index.css](file:///Users/dishagaglani/Desktop/L&T%20PES/BA_BOT/ba-agent/frontend/src/index.css): Sets base HTML/body variables, typography fonts, and utility classes.
-
-For complete project details and setup instructions, refer to the [Root README](../README.md).

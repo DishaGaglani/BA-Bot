@@ -1969,15 +1969,6 @@ function App() {
               <div className="chat-composer-section">
                 {!isLocked ? (
                   <>
-                    <div className="suggestions-chips">
-                      <span style={{ fontSize: '0.8rem', fontWeight: '700', color: 'var(--text-muted)', marginRight: '4px' }}>Suggestions:</span>
-                      {['Existing software?', 'Number of users?', 'Reporting needs?', 'Integrations?'].map((item) => (
-                        <button key={item} className="suggestion-chip" onClick={() => setDraftInput(item)}>
-                          {item}
-                        </button>
-                      ))}
-                    </div>
-
                     <form className="composer-form" onSubmit={handleSend}>
                       <input
                         value={draftInput}

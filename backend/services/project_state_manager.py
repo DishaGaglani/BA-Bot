@@ -10,7 +10,7 @@ from models import Project
 from services.gap_analyzer import analyze_gaps
 from utils.prod_ready import request_with_retry
 
-PREDICTION_URL = "https://forjinn.com/api/v1/prediction/249fc96e-5b62-4208-8787-0d77367e9eaf"
+PREDICTION_URL = os.getenv("PREDICTION_URL", "https://forjinn.com/api/v1/prediction/249fc96e-5b62-4208-8787-0d77367e9eaf")
 
 DEFAULT_STATE = {
     # Project Info
