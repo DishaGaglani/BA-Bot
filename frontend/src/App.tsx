@@ -1863,40 +1863,40 @@ function App() {
     return (
       <div className="interview-shell">
         {/* Sub-header Bar */}
-        <div className="panel-header interview-header" style={{ borderLeft: `6px solid ${getStatusColor(projectData.status)}`, padding: '12px 24px', background: '#ffffff', borderRadius: '12px', boxShadow: 'var(--shadow-sm)' }}>
+        <div className="panel-header interview-header" style={{ borderLeft: `6px solid ${getStatusColor(projectData.status)}`, padding: '8px 16px', background: '#ffffff', borderRadius: '12px', boxShadow: 'var(--shadow-sm)' }}>
           <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
             <button 
               className="secondary" 
               onClick={() => setActivePage('dashboard')}
-              style={{ padding: '8px 14px', fontSize: '0.9rem' }}
+              style={{ padding: '6px 12px', fontSize: '0.82rem' }}
             >
               📋 All Projects
             </button>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <p className="eyebrow" style={{ margin: '0' }}>AI Workspace</p>
+                <p className="eyebrow" style={{ margin: '0', fontSize: '0.65rem' }}>AI Workspace</p>
                 <span style={{
-                  fontSize: '0.75rem',
+                  fontSize: '0.7rem',
                   fontWeight: '700',
-                  padding: '2px 8px',
-                  borderRadius: '6px',
+                  padding: '1px 6px',
+                  borderRadius: '4px',
                   background: `${getStatusColor(projectData.status)}22`,
                   color: getStatusColor(projectData.status)
                 }}>
                   {projectData.status}
                 </span>
               </div>
-              <h2 style={{ marginTop: '4px', fontSize: '1.4rem' }}>{projectData.project?.name || 'Discovery Workshop'}</h2>
+              <h2 style={{ marginTop: '2px', fontSize: '1.15rem' }}>{projectData.project?.name || 'Discovery Workshop'}</h2>
             </div>
           </div>
           
-          <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
             {projectData.status === 'DRAFT' && isOwnerOrAdmin && (
-              <button className="primary" style={{ backgroundColor: '#f59e0b', boxShadow: '0 4px 12px rgba(245, 158, 11, 0.2)' }} onClick={handleSubmitForReview}>
+              <button className="primary" style={{ backgroundColor: '#f59e0b', boxShadow: '0 4px 12px rgba(245, 158, 11, 0.2)', padding: '6px 12px', fontSize: '0.82rem' }} onClick={handleSubmitForReview}>
                 Submit for Review
               </button>
             )}
-            <button className="secondary" onClick={() => setActivePage('review')}>
+            <button className="secondary" onClick={() => setActivePage('review')} style={{ padding: '6px 12px', fontSize: '0.82rem' }}>
               Go to Review &amp; Export
             </button>
             {(currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMIN') && (
@@ -1906,18 +1906,18 @@ function App() {
                   setActivePage('admin')
                   window.history.pushState({}, '', '/admin')
                 }} 
-                style={{ fontSize: '0.85rem', padding: '8px 16px', background: '#eff6ff', color: '#1e40af', border: '1px solid #bfdbfe' }}
+                style={{ fontSize: '0.82rem', padding: '6px 12px', background: '#eff6ff', color: '#1e40af', border: '1px solid #bfdbfe' }}
               >
                 🛡️ Admin Panel
               </button>
             )}
-            <div className="profile-pill">
-              <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#1e293b' }}>{currentUser?.name}</span>
-              <span style={{ fontSize: '0.7rem', fontWeight: '700', color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <div className="profile-pill" style={{ padding: '4px 10px' }}>
+              <span style={{ fontSize: '0.82rem', fontWeight: '700', color: '#1e293b' }}>{currentUser?.name}</span>
+              <span style={{ fontSize: '0.65rem', fontWeight: '700', color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 {currentUser && getRoleLabel(currentUser.role)}
               </span>
             </div>
-            <button className="secondary" onClick={handleLogout} style={{ fontSize: '0.85rem', padding: '8px 16px', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fecaca' }}>
+            <button className="secondary" onClick={handleLogout} style={{ fontSize: '0.82rem', padding: '6px 12px', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fecaca' }}>
               Sign Out 🚪
             </button>
           </div>
@@ -1972,6 +1972,7 @@ function App() {
                   <>
                     <form className="composer-form" onSubmit={handleSend}>
                       <input
+                        autoFocus
                         value={draftInput}
                         onChange={(event: ChangeEvent<HTMLInputElement>) => setDraftInput(event.target.value)}
                         placeholder="Type your response to the discovery agent..."
@@ -2895,7 +2896,7 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${activePage === 'interview' ? 'is-interview-page' : ''}`}>
       {activePage !== 'interview' && (
         <header className="header" style={{ borderBottom: '1px solid #dce5f0' }}>
           <div>

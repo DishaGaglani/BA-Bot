@@ -265,7 +265,8 @@ input::placeholder {
 /* --- Split-Screen Authentication Portal --- */
 .auth-split-wrapper {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   background-color: var(--bg-app);
 }
 
@@ -391,6 +392,7 @@ input::placeholder {
   justify-content: center;
   padding: 40px;
   background-color: var(--bg-app);
+  overflow-y: auto;
 }
 
 .auth-card-container {
@@ -548,14 +550,46 @@ input::placeholder {
   line-height: 1.1;
 }
 
+/* --- Locked Viewport layout for ChatGPT-style experience --- */
+.app-shell.is-interview-page {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.app-shell.is-interview-page .workspace {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.app-shell.is-interview-page .main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 12px 16px;
+  max-width: 100%;
+}
+
+.interview-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 16px;
+  min-height: 0;
+}
+
 /* --- Unified side-by-side workspace --- */
 .unified-workspace-container {
   display: grid;
   grid-template-columns: 1fr;
   grid-template-rows: minmax(0, 1fr);
-  gap: 28px;
-  height: calc(100vh - 120px);
-  max-height: 900px;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
   max-width: 900px;
   margin: 0 auto;
   width: 100%;
@@ -569,6 +603,7 @@ input::placeholder {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 0;
 }
 
 .chat-panel {
@@ -946,6 +981,8 @@ input::placeholder {
 @media (max-width: 900px) {
   .auth-split-wrapper {
     flex-direction: column;
+    height: auto;
+    overflow: visible;
   }
   
   .auth-branding-side {
