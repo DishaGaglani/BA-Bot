@@ -172,6 +172,10 @@ def update_project(
     if project.locked:
         raise HTTPException(status_code=403, detail="Project is locked and cannot be updated.")
 
+    # Keep the existing session_id if one already exists in the database and the payload is not clearing it
+    if project.session_id and payload.sessionId is not None:
+        payload.sessionId = project.session_id
+
     # Preserve existing sessionId if update payload lacks one
     try:
         existing_data = json.loads(project.data)

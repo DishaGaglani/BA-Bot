@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE_URL } from '../config';
 
 interface DocumentData {
   id: number;
@@ -23,7 +24,7 @@ const DocumentsPanel: React.FC<DocumentsPanelProps> = ({ token }) => {
   const fetchDocuments = async () => {
     setLoading(true);
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/documents', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/documents`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -44,7 +45,7 @@ const DocumentsPanel: React.FC<DocumentsPanelProps> = ({ token }) => {
   const handleDownload = async (projectId: number, format: string, projectName: string) => {
     try {
       const formatParam = format.toLowerCase() === 'docx' ? 'word' : 'pdf';
-      const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/export?format=${formatParam}`, {
+      const res = await fetch(`${API_BASE_URL}/api/projects/${projectId}/export?format=${formatParam}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!res.ok) {

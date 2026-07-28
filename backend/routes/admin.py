@@ -957,14 +957,21 @@ def list_admin_documents(
     current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
-    # Query export logs
+    # Query export and document generation logs
     doc_logs = db.query(AuditLog).filter(
-        AuditLog.action.like("%export%")
+        (AuditLog.action.like("%export%")) | (AuditLog.action == "document generation")
     ).order_by(AuditLog.timestamp.desc()).all()
     
     result = []
     for dl in doc_logs:
-        doc_type = "PDF" if "pdf" in dl.action.lower() else "DOCX"
+        meta = {}
+        if dl.metadata_json:
+            try:
+                meta = json.loads(dl.metadata_json)
+            except Exception:
+                pass
+        fmt = meta.get("format", "")
+        doc_type = "PDF" if (fmt.lower() == "pdf" or "pdf" in dl.action.lower()) else "DOCX"
         project_name = dl.project.name if dl.project else "Unknown Project"
         result.append({
             "id": dl.id,

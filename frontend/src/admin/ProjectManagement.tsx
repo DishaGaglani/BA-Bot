@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE_URL } from '../config';
 
 export interface ProjectData {
   id: number;
@@ -55,7 +56,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
   const fetchProjects = async () => {
     setLoading(true);
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/projects', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/projects`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -76,7 +77,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/projects', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/projects`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -112,7 +113,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
     e.preventDefault();
     if (!activeProject) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/projects/${activeProject.id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/projects/${activeProject.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -147,7 +148,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
   const handleArchive = async (projectId: number) => {
     if (!confirm('Are you sure you want to archive this project?')) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/projects/${projectId}/archive`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/projects/${projectId}/archive`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -166,7 +167,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
   const handleDelete = async (projectId: number) => {
     if (!confirm('WARNING: Deleting this project will remove all messages, members, and data associated with it. This cannot be undone. Proceed?')) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/projects/${projectId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/projects/${projectId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -186,7 +187,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
     e.preventDefault();
     if (!activeProject || !newOwnerId) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/projects/${activeProject.id}/transfer-ownership`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/projects/${activeProject.id}/transfer-ownership`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -211,7 +212,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
   const handleToggleLock = async (projectId: number, currentLocked: boolean) => {
     try {
       const endpoint = currentLocked ? 'unlock' : 'lock';
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/projects/${projectId}/${endpoint}`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/projects/${projectId}/${endpoint}`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -229,7 +230,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
 
   const handleClone = async (projectId: number) => {
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/projects/${projectId}/clone`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/projects/${projectId}/clone`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -247,7 +248,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
 
   const handleDownloadExport = async (projectId: number, format: 'pdf' | 'word', projectName: string) => {
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/export?format=${format}`, {
+      const res = await fetch(`${API_BASE_URL}/api/projects/${projectId}/export?format=${format}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!res.ok) throw new Error('Export failed');

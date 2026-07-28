@@ -13,17 +13,23 @@ window.fetch = async function(...args) {
     if (contentType && contentType.includes("application/json")) {
       const json = await clone.json();
       if (json && typeof json === "object" && "success" in json) {
+        // Strip headers that are specific to the original wrapped content
+        const newHeaders = new Headers(response.headers);
+        newHeaders.delete("content-length");
+        newHeaders.delete("content-encoding");
+        newHeaders.delete("transfer-encoding");
+
         if (json.success && "data" in json) {
           return new Response(JSON.stringify(json.data), {
             status: response.status,
             statusText: response.statusText,
-            headers: response.headers
+            headers: newHeaders
           });
         } else if (!json.success) {
           return new Response(JSON.stringify({ detail: json.message || "An error occurred." }), {
             status: response.status >= 400 ? response.status : 400,
             statusText: response.statusText,
-            headers: response.headers
+            headers: newHeaders
           });
         }
       }

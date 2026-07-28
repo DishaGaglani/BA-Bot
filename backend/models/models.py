@@ -63,6 +63,8 @@ class Project(Base):
     data = Column(Text, nullable=True)
     summary = Column(Text, nullable=True)
     structured_state = Column(Text, nullable=True)
+    forjinn_session_id = Column(String, nullable=True)
+    requirements_state = Column(Text, default='{}', nullable=True)
     locked = Column(Boolean, default=False, nullable=False)
 
     # Relationships

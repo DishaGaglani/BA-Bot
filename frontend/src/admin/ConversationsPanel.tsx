@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE_URL } from '../config';
 
 interface ConversationData {
   project_id: number;
@@ -33,7 +34,7 @@ const ConversationsPanel: React.FC<ConversationsPanelProps> = ({ token }) => {
   const fetchConversations = async () => {
     setLoading(true);
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/conversations', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/conversations`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -56,7 +57,7 @@ const ConversationsPanel: React.FC<ConversationsPanelProps> = ({ token }) => {
     setLoadingMessages(true);
     setViewerOpen(true);
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/projects/${projectId}/details`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/projects/${projectId}/details`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -74,7 +75,7 @@ const ConversationsPanel: React.FC<ConversationsPanelProps> = ({ token }) => {
   const handleDeleteHistory = async (projectId: number) => {
     if (!confirm('Are you sure you want to clear this dialogue history? This will delete all chat messages in the session, but preserve the project metadata.')) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/conversations/${projectId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/conversations/${projectId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });

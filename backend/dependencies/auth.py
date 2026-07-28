@@ -10,7 +10,7 @@ from models import User, UserRole, Project, ProjectMember, ProjectMemberRole
 from auth.jwt import decode_access_token
 from services.audit import log_action
 
-reusable_oauth2 = HTTPBearer()
+reusable_oauth2 = HTTPBearer(auto_error=False)
 
 def get_db():
     db = SessionLocal()

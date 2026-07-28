@@ -42,7 +42,7 @@ Every project workspace maintains a structured state (persisted as serialized JS
 ## 3. State-Driven Elicitation Manager
 
 ### 3.1 Dependency Graph & Priority
-The state controller in [gap_analyzer.py](file:///Users/dishagaglani/Desktop/L&T%20PES/BA_BOT/ba-agent/backend/services/gap_analyzer.py) enforces pre-requisites before any requirement section becomes targetable:
+The state controller in [gap_analyzer.py](../backend/services/gap_analyzer.py) enforces pre-requisites before any requirement section becomes targetable:
 - `functional_requirements` depends on `industry` (Business Objectives)
 - `non_functional_requirements` depends on `functional_requirements`
 - `integrations` depends on `functional_requirements`
@@ -57,7 +57,7 @@ If a section's pre-requisites are unfulfilled, it is automatically skipped for a
 ---
 
 ## 4. Prompt Context Minimization
-- The system prompt generator in [prompt_builder.py](file:///Users/dishagaglani/Desktop/L&T%20PES/BA_BOT/ba-agent/backend/services/prompt_builder.py) loads:
+- The system prompt generator in [prompt_builder.py](../backend/services/prompt_builder.py) loads:
   1. System Prompt
   2. Project Metadata
   3. Current Requirement Stage Focus

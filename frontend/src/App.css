@@ -551,10 +551,18 @@ input::placeholder {
 /* --- Unified side-by-side workspace --- */
 .unified-workspace-container {
   display: grid;
-  grid-template-columns: 1.1fr 1fr;
+  grid-template-columns: 1fr;
+  grid-template-rows: minmax(0, 1fr);
   gap: 28px;
   height: calc(100vh - 120px);
   max-height: 900px;
+  max-width: 900px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.unified-workspace-container > .workspace-column:nth-child(2) {
+  display: none;
 }
 
 .workspace-column {

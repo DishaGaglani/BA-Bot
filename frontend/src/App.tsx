@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, type FormEvent, type ChangeEvent } from 'react'
+import { API_BASE_URL } from './config';
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import './App.css'
@@ -488,7 +489,7 @@ function App() {
   const loadProjects = async (authToken = token) => {
     if (!authToken) return []
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/projects', {
+      const response = await fetch(`${API_BASE_URL}/api/projects`, {
         headers: { 'Authorization': `Bearer ${authToken}` }
       })
       if (response.ok) {
@@ -507,7 +508,7 @@ function App() {
   const handleLoadProject = async (id: number) => {
     if (!token) return
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/projects/${id}`, {
+      const response = await fetch(`${API_BASE_URL}/api/projects/${id}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
       if (response.ok) {
@@ -530,7 +531,7 @@ function App() {
   const loadProjectMembers = async (projId: number) => {
     if (!token) return
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/projects/${projId}/members`, {
+      const response = await fetch(`${API_BASE_URL}/api/projects/${projId}/members`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
       if (response.ok) {
@@ -546,7 +547,7 @@ function App() {
     if (!confirm('Are you sure you want to delete this project?')) return
     if (!token) return
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/projects/${id}`, {
+      const response = await fetch(`${API_BASE_URL}/api/projects/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       })
@@ -572,7 +573,7 @@ function App() {
     if (!activeProjectId || !inviteEmail.trim() || !token) return
     
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/projects/${activeProjectId}/invite`, {
+      const response = await fetch(`${API_BASE_URL}/api/projects/${activeProjectId}/invite`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -599,7 +600,7 @@ function App() {
   const handleSubmitForReview = async () => {
     if (!activeProjectId || !token) return
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/projects/${activeProjectId}/submit`, {
+      const response = await fetch(`${API_BASE_URL}/api/projects/${activeProjectId}/submit`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       })
@@ -617,7 +618,7 @@ function App() {
   const handleReviewProject = async (approved: boolean) => {
     if (!activeProjectId || !token) return
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/projects/${activeProjectId}/review`, {
+      const response = await fetch(`${API_BASE_URL}/api/projects/${activeProjectId}/review`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -651,7 +652,7 @@ function App() {
   const handleAutoCreateProject = async (authToken = token) => {
     if (!authToken) return null
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/projects', {
+      const response = await fetch(`${API_BASE_URL}/api/projects`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -691,14 +692,14 @@ function App() {
   const fetchAdminData = async () => {
     if (!token) return
     try {
-      const uRes = await fetch('http://127.0.0.1:8000/api/admin/users', {
+      const uRes = await fetch(`${API_BASE_URL}/api/admin/users`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
       if (uRes.ok) {
         setUsersList(await uRes.json())
       }
       
-      const lRes = await fetch('http://127.0.0.1:8000/api/admin/audit-logs', {
+      const lRes = await fetch(`${API_BASE_URL}/api/admin/audit-logs`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
       if (lRes.ok) {
@@ -712,7 +713,7 @@ function App() {
   const handleUpdateUserRole = async (userId: number, newRole: string) => {
     if (!token) return
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/admin/users/${userId}/role`, {
+      const response = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/role`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -741,7 +742,7 @@ function App() {
       return
     }
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/admin/users', {
+      const response = await fetch(`${API_BASE_URL}/api/admin/users`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -786,7 +787,7 @@ function App() {
         return
       }
       try {
-        const response = await fetch('http://127.0.0.1:8000/api/auth/me', {
+        const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
           headers: { 'Authorization': `Bearer ${token}` }
         })
         if (response.ok) {
@@ -855,7 +856,7 @@ function App() {
 
     const syncProjectData = async () => {
       try {
-        await fetch(`http://127.0.0.1:8000/api/projects/${activeProjectId}`, {
+        await fetch(`${API_BASE_URL}/api/projects/${activeProjectId}`, {
           method: 'PUT',
           headers: { 
             'Content-Type': 'application/json',
@@ -962,7 +963,7 @@ function App() {
     setIsLoading(true)
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/predict', {
+      const response = await fetch(`${API_BASE_URL}/api/predict`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -1058,7 +1059,7 @@ function App() {
 
       if (activeProjectId && token) {
         try {
-          const res = await fetch(`http://127.0.0.1:8000/api/projects/${activeProjectId}`, {
+          const res = await fetch(`${API_BASE_URL}/api/projects/${activeProjectId}`, {
             headers: { 'Authorization': `Bearer ${token}` }
           })
           if (res.ok) {
@@ -1113,7 +1114,7 @@ function App() {
 
     try {
       setIsLoading(true)
-      const response = await fetch('http://127.0.0.1:8000/api/projects', {
+      const response = await fetch(`${API_BASE_URL}/api/projects`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -1153,7 +1154,7 @@ function App() {
     setProjectData(updatedProject);
 
     try {
-      await fetch(`http://127.0.0.1:8000/api/projects/${activeProjectId}`, {
+      await fetch(`${API_BASE_URL}/api/projects/${activeProjectId}`, {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
@@ -1201,7 +1202,7 @@ function App() {
       setIsLoading(true)
       
       try {
-        const response = await fetch(`http://127.0.0.1:8000/api/projects/${activeProjectId}/export?format=${format}`, {
+        const response = await fetch(`${API_BASE_URL}/api/projects/${activeProjectId}/export?format=${format}`, {
           headers: { 'Authorization': `Bearer ${token}` }
         })
         
@@ -1245,7 +1246,7 @@ function App() {
     e.preventDefault()
     setAuthError('')
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/auth/login', {
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: loginEmail, password: loginPassword })
@@ -1284,7 +1285,7 @@ function App() {
     e.preventDefault()
     setAuthError('')
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/auth/register', {
+      const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: regName, email: regEmail, password: regPassword, role: regRole })
@@ -1292,7 +1293,7 @@ function App() {
       if (response.ok) {
         setNotice({ title: 'Registration Complete', detail: 'Account created! Logging in now...' })
         // Autologin after registration
-        const loginRes = await fetch('http://127.0.0.1:8000/api/auth/login', {
+        const loginRes = await fetch(`${API_BASE_URL}/api/auth/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: regEmail, password: regPassword })
@@ -1329,7 +1330,7 @@ function App() {
   const handleLogout = async () => {
     if (token) {
       try {
-        await fetch('http://127.0.0.1:8000/api/auth/logout', {
+        await fetch(`${API_BASE_URL}/api/auth/logout`, {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${token}` }
         })

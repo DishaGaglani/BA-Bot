@@ -25,7 +25,8 @@ def get_or_create_user(db, name, email, password, role):
     return user
 
 def run_migration():
-    db_path = "/Users/dishagaglani/Desktop/L&T PES/BA_BOT/ba-agent/backend/ba_bot.db"
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    db_path = os.path.join(base_dir, "ba_bot.db")
     
     needs_migration = False
     rename_needed = False
@@ -148,6 +149,8 @@ def run_migration():
             for table, col, col_def in [
                 ("projects", "summary", "TEXT"),
                 ("projects", "structured_state", "TEXT"),
+                ("projects", "forjinn_session_id", "TEXT"),
+                ("projects", "requirements_state", "TEXT DEFAULT '{}'"),
                 ("projects", "description", "TEXT"),
                 ("projects", "department", "TEXT"),
                 ("projects", "business_unit", "TEXT"),

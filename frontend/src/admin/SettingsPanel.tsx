@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE_URL } from '../config';
 
 interface SettingsData {
   workspaceName: string;
@@ -49,7 +50,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ token }) => {
   const fetchSettings = async () => {
     setLoading(true);
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/settings', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/settings`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -69,7 +70,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ token }) => {
 
   const fetchDiscoverySections = async () => {
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/discovery-sections', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/discovery-sections`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -91,7 +92,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ token }) => {
     setSaving(true);
     setSuccessMsg('');
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/settings', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/settings`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -136,7 +137,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ token }) => {
     setSaving(true);
     setSuccessMsg('');
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/discovery-sections/${editingSectionId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/discovery-sections/${editingSectionId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

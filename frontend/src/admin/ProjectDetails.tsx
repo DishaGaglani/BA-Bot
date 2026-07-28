@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE_URL } from '../config';
 
 interface ProjectDetailsProps {
   token: string;
@@ -77,7 +78,7 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
   const fetchDetails = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/projects/${projectId}/details`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/projects/${projectId}/details`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -98,7 +99,7 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
   const handlePublish = async () => {
     if (!confirm('Are you sure you want to publish this requirements workspace? This will freeze the state.')) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/projects/${projectId}/publish`, {
+      const res = await fetch(`${API_BASE_URL}/api/projects/${projectId}/publish`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -139,7 +140,7 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
     if (!overview) return;
     try {
       const endpoint = overview.locked ? 'unlock' : 'lock';
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/projects/${projectId}/${endpoint}`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/projects/${projectId}/${endpoint}`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -158,7 +159,7 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
   const handleRemoveMember = async (userId: number) => {
     if (!confirm('Are you sure you want to remove this user from the project?')) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/projects/${projectId}/members/${userId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/projects/${projectId}/members/${userId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -176,7 +177,7 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
 
   const handleChangeMemberRole = async (userId: number, role: string) => {
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/projects/${projectId}/members/${userId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/projects/${projectId}/members/${userId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -200,7 +201,7 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
     e.preventDefault();
     if (selectedUserIds.length === 0) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/projects/${projectId}/members`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/projects/${projectId}/members`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

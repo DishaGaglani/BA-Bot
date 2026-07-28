@@ -37,12 +37,26 @@ def run_e2e_validation():
 
     headers_admin = {"Authorization": f"Bearer {admin_token}"}
 
+    # Retrieve BA user ID dynamically
+    ba_user_id = 2
+    try:
+        users_res = requests.get(f"{BASE_URL}/api/admin/users", headers=headers_admin)
+        if users_res.status_code == 200:
+            users_list = users_res.json()
+            if isinstance(users_list, dict) and "data" in users_list:
+                users_list = users_list["data"]
+            ba_user = next((u for u in users_list if u["email"] == "ba@example.com"), None)
+            if ba_user:
+                ba_user_id = ba_user["id"]
+    except Exception as e:
+        print(f"Warning: Failed to dynamically retrieve BA user ID: {e}")
+
     # Step 2: Create Team
     team_id = None
     try:
         res = requests.post(f"{BASE_URL}/api/admin/teams", headers=headers_admin, json={
             "name": f"Validation Team {int(time.time())}",
-            "manager_id": 2  # ba@example.com
+            "manager_id": ba_user_id  # ba@example.com
         })
         if res.status_code == 200:
             data = res.json()
@@ -85,9 +99,9 @@ def run_e2e_validation():
 
     # Step 4: Assign Users to Team and Project to Team
     try:
-        # Add BA user (ID: 2) to team
+        # Add BA user to team
         res_mem = requests.post(f"{BASE_URL}/api/admin/teams/{team_id}/members", headers=headers_admin, json={
-            "user_ids": [2]
+            "user_ids": [ba_user_id]
         })
         # Assign project to team
         res_proj = requests.post(f"{BASE_URL}/api/admin/teams/{team_id}/projects", headers=headers_admin, json={

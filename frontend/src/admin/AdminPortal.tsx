@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE_URL } from '../config';
 import AdminLayout from './AdminLayout';
 import Dashboard from './Dashboard';
 import UserManagement, { User } from './UserManagement';
@@ -61,7 +62,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
   const fetchUsers = async () => {
     setLoadingUsers(true);
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/users', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/users`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -79,7 +80,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
   const fetchProjects = async () => {
     setLoadingProjects(true);
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/projects', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/projects`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -97,7 +98,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
   const fetchLogs = async () => {
     setLoadingLogs(true);
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/audit-logs', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/audit-logs`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -115,7 +116,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
   const fetchPermissions = async () => {
     setLoadingPermissions(true);
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/permissions', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/permissions`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -133,7 +134,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
   const fetchDashboardStats = async () => {
     setLoadingStats(true);
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/dashboard-stats', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/dashboard-stats`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -164,7 +165,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
   // Actions
   const handleUpdateRole = async (userId: number, role: string) => {
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/users/${userId}/role`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/role`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -188,7 +189,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
 
   const handleUpdateUser = async (userId: number, data: { name: string; email: string; role: string; department: string; status: string }) => {
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/users/${userId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/users/${userId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -212,7 +213,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
 
   const handleDeleteUser = async (userId: number) => {
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/users/${userId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/users/${userId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -232,7 +233,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
 
   const handleAddUser = async (data: { name: string; email: string; password_hash: string; role: string; department: string }) => {
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/users', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/users`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -256,7 +257,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
 
   const handleSavePermissions = async (updatedMatrix: any) => {
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/permissions', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/permissions`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

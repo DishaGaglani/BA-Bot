@@ -234,20 +234,45 @@ Each project is stored as a **JSON blob** in SQLite, structured as follows:
 
 ## 🔧 Development
 
+### 1 — Backend
 ```bash
-# Frontend — dev server with HMR
-cd frontend && npm run dev
+cd backend
+pip install -r requirements.txt
+python app.py
+```
 
-# Frontend — production build
-cd frontend && npm run build
-
-# Frontend — lint check
-cd frontend && npm run lint
-
-# Backend — run with auto-reload
-cd backend && uvicorn app:app --reload --host 0.0.0.0 --port 8000
+### 2 — Frontend
+```bash
+cd frontend
+npm install
+npm run dev
 ```
 
 ---
 
+## 🚀 Production Deployment
 
+### 1 — Environment Configuration
+Copy `.env.example` to `.env` in the root workspace and customize the variables:
+```bash
+cp .env.example .env
+```
+Ensure you update the production configuration:
+- Set `ENV=production`
+- Set `JWT_SECRET` to a secure, long secret (minimum 32 characters)
+- Set `FRONTEND_URL` to restrict CORS access to your deployment domain
+
+### 2 — Backend Production Server
+Ensure environment variables are loaded and run the Uvicorn server without reload mode:
+```bash
+cd backend
+ENV=production python3 app.py
+```
+
+### 3 — Frontend Production Build
+Generate production build files:
+```bash
+cd frontend
+npm run build
+```
+Serve the generated files from `frontend/dist/` using Nginx or any secure static site host.

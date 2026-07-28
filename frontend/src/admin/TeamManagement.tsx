@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE_URL } from '../config';
 
 interface UserData {
   id: number;
@@ -73,7 +74,7 @@ const TeamManagement: React.FC<TeamManagementProps> = ({
   const fetchTeams = async () => {
     setLoading(true);
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/teams', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/teams`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -94,7 +95,7 @@ const TeamManagement: React.FC<TeamManagementProps> = ({
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/teams', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/teams`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -125,7 +126,7 @@ const TeamManagement: React.FC<TeamManagementProps> = ({
     e.preventDefault();
     if (!activeTeam) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/teams/${activeTeam.id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/teams/${activeTeam.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -156,7 +157,7 @@ const TeamManagement: React.FC<TeamManagementProps> = ({
   const handleDelete = async (id: number) => {
     if (!confirm('Are you sure you want to delete this team? Members will be unassigned.')) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/teams/${id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/teams/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -184,7 +185,7 @@ const TeamManagement: React.FC<TeamManagementProps> = ({
   const handleSaveMembers = async () => {
     if (!activeTeam) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/teams/${activeTeam.id}/members`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/teams/${activeTeam.id}/members`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -212,7 +213,7 @@ const TeamManagement: React.FC<TeamManagementProps> = ({
     setLoadingAnalytics(true);
     setIsProjectsOpen(true);
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/teams/${team.id}/analytics`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/teams/${team.id}/analytics`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -229,7 +230,7 @@ const TeamManagement: React.FC<TeamManagementProps> = ({
   const handleSaveProjects = async () => {
     if (!activeTeam) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/teams/${activeTeam.id}/projects`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/teams/${activeTeam.id}/projects`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -256,7 +257,7 @@ const TeamManagement: React.FC<TeamManagementProps> = ({
     setAnalytics(null);
     setIsAnalyticsOpen(true);
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/teams/${team.id}/analytics`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/teams/${team.id}/analytics`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE_URL } from '../config';
 
 interface RoleDistribution {
   role: string;
@@ -39,7 +40,7 @@ const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({ token }) => {
   const fetchAnalytics = async () => {
     setLoading(true);
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/analytics', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/analytics`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
