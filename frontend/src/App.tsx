@@ -649,46 +649,6 @@ function App() {
     }
   }, [chatMessages])
 
-  const handleAutoCreateProject = async (authToken = token) => {
-    if (!authToken) return null
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/projects`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`
-        },
-        body: JSON.stringify({
-          project: {
-            name: "Discovery Session",
-            department: "",
-            sponsor: "",
-            business_unit: "",
-            expected_completion: ""
-          },
-          overview: {},
-          discovery: {},
-          functional_requirements: [],
-          missing_fields: [],
-          next_question: ""
-        })
-      })
-      if (response.ok) {
-        const newProj = await response.json()
-        setProjectsList([newProj])
-        setActiveProjectId(newProj.id)
-        localStorage.setItem('ba_bot_active_project_id', newProj.id.toString())
-        setProjectData(sanitizeProjectData(newProj))
-        setActivePage('interview')
-        void loadProjectMembers(newProj.id)
-        return newProj
-      }
-    } catch (err) {
-      console.error("Auto-create project failed", err)
-    }
-    return null
-  }
-
   const fetchAdminData = async () => {
     if (!token) return
     try {
@@ -1111,7 +1071,7 @@ function App() {
   const handleStartNewInterview = async () => {
     if (!token) return
     const newProjPayload: ProjectData = {
-      ...projectData,
+      ...initialProject,
       messages: initialMessages,
       sessionId: null,
     }
@@ -1120,7 +1080,7 @@ function App() {
       setIsLoading(true)
       const response = await fetch(`${API_BASE_URL}/api/projects`, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
@@ -1158,18 +1118,26 @@ function App() {
     setProjectData(updatedProject);
 
     try {
-      await fetch(`${API_BASE_URL}/api/projects/${activeProjectId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/projects/${activeProjectId}`, {
         method: 'PUT',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify(updatedProject),
+        body: JSON.stringify({ ...updatedProject, resetSession: true }),
       });
-      setNotice({ title: 'Chat Cleared', detail: 'Conversation history reset successfully.' });
+      if (response.ok) {
+        const freshProject = await response.json();
+        setProjectData(sanitizeProjectData(freshProject));
+        setNotice({ title: 'Chat Cleared', detail: 'Conversation history reset successfully.' });
+      } else {
+        setNotice({ title: 'Reset Failed', detail: 'Could not reset the conversation on the server.' });
+      }
       setTimeout(() => setNotice(null), 1800);
     } catch (error) {
       console.error('Failed to clear chat on backend', error);
+      setNotice({ title: 'Reset Failed', detail: 'Could not reset the conversation on the server.' });
+      setTimeout(() => setNotice(null), 1800);
     }
   };
 

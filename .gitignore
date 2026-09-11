@@ -2,6 +2,12 @@
 .env
 .env.local
 .env.*.local
+*.env
+!.env.example
+
+# Production build artefacts
+*.tar
+*.zip
 
 # Databases
 *.db

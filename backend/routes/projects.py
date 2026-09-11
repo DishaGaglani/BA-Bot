@@ -9,7 +9,7 @@ import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from models import User, UserRole, Project, ProjectMember, ProjectMemberRole
+from models import User, UserRole, Project, ProjectMember, ProjectMemberRole, Message
 from services.audit import log_action
 from dependencies.auth import (
     get_current_user,
@@ -18,7 +18,7 @@ from dependencies.auth import (
     require_project_access,
     require_project_owner
 )
-from utils.export import parse_markdown_to_docx, parse_markdown_to_pdf
+from utils.export import parse_markdown_to_pdf
 from services.project_state_manager import get_legacy_payload, get_structured_state, DEFAULT_STATE
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -43,6 +43,7 @@ class ProjectDetailsPayload(BaseModel):
 class ProjectPayload(BaseModel):
     id: int | None = None
     sessionId: str | None = None
+    resetSession: bool = False
     pdfGenerated: bool | None = False
     messages: list[dict] | None = None
     project: ProjectDetailsPayload
@@ -172,30 +173,40 @@ def update_project(
     if project.locked:
         raise HTTPException(status_code=403, detail="Project is locked and cannot be updated.")
 
-    # Keep the existing session_id if one already exists in the database and the payload is not clearing it
-    if project.session_id and payload.sessionId is not None:
-        payload.sessionId = project.session_id
-
-    # Preserve existing sessionId if update payload lacks one
-    try:
-        existing_data = json.loads(project.data)
-        existing_session_id = existing_data.get("sessionId")
-        if existing_session_id and not payload.sessionId:
-            payload.sessionId = existing_session_id
-    except Exception:
-        pass
-
-    if not payload.sessionId:
+    if payload.resetSession:
+        # Explicit reset request (e.g. "Reset Chat"): always issue a fresh session and
+        # drop the Forjinn-side session so it starts a conversation with no prior memory,
+        # instead of falling into the "preserve existing session" logic below.
         import uuid
         payload.sessionId = f"session-{uuid.uuid4()}"
+        project.forjinn_session_id = None
+        project.summary = None
+        db.query(Message).filter(Message.project_id == project_id).delete()
+    else:
+        # Keep the existing session_id if one already exists in the database and the payload is not clearing it
+        if project.session_id and payload.sessionId is not None:
+            payload.sessionId = project.session_id
+
+        # Preserve existing sessionId if update payload lacks one
+        try:
+            existing_data = json.loads(project.data)
+            existing_session_id = existing_data.get("sessionId")
+            if existing_session_id and not payload.sessionId:
+                payload.sessionId = existing_session_id
+        except Exception:
+            pass
+
+        if not payload.sessionId:
+            import uuid
+            payload.sessionId = f"session-{uuid.uuid4()}"
 
     payload.id = project_id
     project.name = payload.project.name or project.name
     project.session_id = payload.sessionId
     project.data = json.dumps(payload.model_dump())
-    
+
     # Sync structured_state with frontend payload updates
-    state = get_structured_state(project)
+    state = DEFAULT_STATE.copy() if payload.resetSession else get_structured_state(project)
     state["project_name"] = payload.project.name
     state["department"] = payload.project.department
     state["sponsor"] = payload.project.sponsor
@@ -203,24 +214,28 @@ def update_project(
     state["industry"] = payload.project.business_unit
     state["timeline"] = payload.project.expected_completion
     
-    if isinstance(payload.overview, dict):
-      state["overview_description"] = payload.overview.get("description", "")
-      state["stakeholders"] = payload.overview.get("stakeholders", [])
-        
-    if isinstance(payload.discovery, dict):
-      state["business_problem"] = payload.discovery.get("business_problem", "")
-      state["business_goals"] = payload.discovery.get("business_goals", "")
-      state["desired_outcomes"] = payload.discovery.get("desired_outcomes", "")
-      state["constraints"] = payload.discovery.get("constraints", "")
-      state["budget"] = payload.discovery.get("budget", "")
-      state["integrations"] = payload.discovery.get("integrations", [])
-      state["non_functional_requirements"] = payload.discovery.get("non_functional_requirements", "")
-        
-    # Map functional requirements
-    state["functional_requirements"] = [
-        req.model_dump() if hasattr(req, "model_dump") else req 
-        for req in payload.functional_requirements
-    ]
+    # A reset wipes discovery content back to blank rather than re-applying whatever the
+    # frontend still had in memory for overview/discovery/functional_requirements, since
+    # those reflect the pre-reset interview, not anything the caller intends to keep.
+    if not payload.resetSession:
+        if isinstance(payload.overview, dict):
+          state["overview_description"] = payload.overview.get("description", "")
+          state["stakeholders"] = payload.overview.get("stakeholders", [])
+
+        if isinstance(payload.discovery, dict):
+          state["business_problem"] = payload.discovery.get("business_problem", "")
+          state["business_goals"] = payload.discovery.get("business_goals", "")
+          state["desired_outcomes"] = payload.discovery.get("desired_outcomes", "")
+          state["constraints"] = payload.discovery.get("constraints", "")
+          state["budget"] = payload.discovery.get("budget", "")
+          state["integrations"] = payload.discovery.get("integrations", [])
+          state["non_functional_requirements"] = payload.discovery.get("non_functional_requirements", "")
+
+        # Map functional requirements
+        state["functional_requirements"] = [
+            req.model_dump() if hasattr(req, "model_dump") else req
+            for req in payload.functional_requirements
+        ]
     
     project.structured_state = json.dumps(state)
     db.commit()
@@ -260,54 +275,60 @@ def export_project(
     session_id = project.session_id
     project_name = project.name
     state = get_structured_state(project)
-    
-    prompt = (
-        f"The requirements interview discovery workshop is complete for project '{project_name}'.\n\n"
-        "Here is the final gathered Project Requirements State gathered during the interview:\n"
-        f"{json.dumps(state, indent=2)}\n\n"
-        "Please generate and compile the final, detailed, and polished Requirements Discovery Document (FDR) "
-        "containing all project information, overview, stakeholders, business problem, business goals, timeline, functional requirements, and constraints. "
-        "Format the output using clear Markdown headings, bullet points, and numbered lists."
-    )
-    
-    payload = {
-        "question": prompt,
-        "streaming": False
-    }
-        
-    try:
-        from utils.prod_ready import request_with_retry
-        response = request_with_retry("POST", PREDICTION_URL, json=payload, timeout=30, verify=False)
-        res_data = response.json()
-        
-        document_text = res_data.get("text")
-        if not document_text:
-            output_obj = res_data.get("output")
-            if isinstance(output_obj, dict):
-                document_text = output_obj.get("content", "")
-            elif isinstance(output_obj, str):
-                document_text = output_obj
-            else:
-                document_text = ""
-    except Exception as e:
-        print(f"[EXPORT WARNING] Failed to connect to {PREDICTION_URL}: {str(e)}. Falling back to local generation...")
-        target_port = os.getenv("PORT", "8000")
-        mock_url = f"http://127.0.0.1:{target_port}/api/mock-predict"
-        try:
-            res_mock = requests.post(mock_url, json=payload, timeout=10)
-            mock_data = res_mock.json()
-            document_text = mock_data.get("text")
-        except Exception:
-            document_text = None
 
-        if not document_text:
-            document_text = f"# Final Discovery Requirements (FDR)\n\n## Project: {project_name}\n\n### Requirements Overview\n" + json.dumps(state, indent=2)
-        
     if format.lower() == "docx":
-        file_stream = parse_markdown_to_docx(document_text)
-        filename = f"{project_name.replace(' ', '_')}_Requirements.docx"
+        from services.fdr_summary import generate_fdr_json
+        from utils.fdr_docx import build_fdr_docx
+
+        fdr_data = generate_fdr_json(project)
+        if not fdr_data.get("project_name"):
+            fdr_data["project_name"] = project_name
+        file_stream = build_fdr_docx(fdr_data)
+        filename = f"{project_name.replace(' ', '_')}_Requirement_Discovery_Form.docx"
         media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     elif format.lower() == "pdf":
+        prompt = (
+            f"The requirements interview discovery workshop is complete for project '{project_name}'.\n\n"
+            "Here is the final gathered Project Requirements State gathered during the interview:\n"
+            f"{json.dumps(state, indent=2)}\n\n"
+            "Please generate and compile the final, detailed, and polished Requirements Discovery Document (FDR) "
+            "containing all project information, overview, stakeholders, business problem, business goals, timeline, functional requirements, and constraints. "
+            "Format the output using clear Markdown headings, bullet points, and numbered lists."
+        )
+
+        payload = {
+            "question": prompt,
+            "streaming": False
+        }
+
+        try:
+            from utils.prod_ready import request_with_retry
+            response = request_with_retry("POST", PREDICTION_URL, json=payload, timeout=30, verify=False)
+            res_data = response.json()
+
+            document_text = res_data.get("text")
+            if not document_text:
+                output_obj = res_data.get("output")
+                if isinstance(output_obj, dict):
+                    document_text = output_obj.get("content", "")
+                elif isinstance(output_obj, str):
+                    document_text = output_obj
+                else:
+                    document_text = ""
+        except Exception as e:
+            print(f"[EXPORT WARNING] Failed to connect to {PREDICTION_URL}: {str(e)}. Falling back to local generation...")
+            target_port = os.getenv("PORT", "8000")
+            mock_url = f"http://127.0.0.1:{target_port}/api/mock-predict"
+            try:
+                res_mock = requests.post(mock_url, json=payload, timeout=10)
+                mock_data = res_mock.json()
+                document_text = mock_data.get("text")
+            except Exception:
+                document_text = None
+
+            if not document_text:
+                document_text = f"# Final Discovery Requirements (FDR)\n\n## Project: {project_name}\n\n### Requirements Overview\n" + json.dumps(state, indent=2)
+
         file_stream = parse_markdown_to_pdf(document_text)
         filename = f"{project_name.replace(' ', '_')}_Requirements.pdf"
         media_type = "application/pdf"
