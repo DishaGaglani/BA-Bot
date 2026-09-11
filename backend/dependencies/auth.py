@@ -121,6 +121,8 @@ def require_project_access(minimum_role: ProjectMemberRole):
                     team = db.query(Team).filter(Team.id == current_user.team_id).first()
                     if team and team.manager_id == current_user.id:
                         user_role = ProjectMemberRole.PROJECT_MANAGER
+                    elif current_user.role == UserRole.BUSINESS_ANALYST:
+                        user_role = ProjectMemberRole.BUSINESS_ANALYST
                     else:
                         user_role = ProjectMemberRole.CONTRIBUTOR
                         

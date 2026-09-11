@@ -50,31 +50,46 @@ setup_global_exception_handlers(app)
 allowed_origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
     "http://localhost:3000",
     "http://127.0.0.1:3000"
 ]
 frontend_url = os.getenv("FRONTEND_URL")
 if frontend_url:
-    allowed_origins.extend([origin.strip() for origin in frontend_url.split(",")])
+    allowed_origins.extend([origin.strip() for origin in frontend_url.split(",") if origin.strip()])
 
-if os.getenv("ENV") == "production":
+is_prod = os.getenv("ENV") == "production"
+
+if is_prod:
     if frontend_url:
-        allowed_origins = [origin.strip() for origin in frontend_url.split(",")]
+        allowed_origins = [origin.strip() for origin in frontend_url.split(",") if origin.strip()]
     else:
         allowed_origins = []
         logger.warning("CORS: FRONTEND_URL environment variable is not set in production. CORS requests will be blocked.")
 
+cors_kwargs = {
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+
+if is_prod:
+    cors_kwargs["allow_origins"] = allowed_origins
+else:
+    cors_kwargs["allow_origin_regex"] = r"http://(localhost|127\.0\.0\.1)(:\d+)?"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    **cors_kwargs
 )
 
 # Standardized response middleware and request logging
 @app.middleware("http")
 async def standardize_responses_middleware(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
     trace_id = str(uuid.uuid4())
     request.state.trace_id = trace_id
     
@@ -150,7 +165,7 @@ app.include_router(auth.routes.router)
 app.include_router(routes.projects.router)
 app.include_router(routes.admin.router)
 
-PREDICTION_URL = os.getenv("PREDICTION_URL", "https://forjinn.com/api/v1/prediction/249fc96e-5b62-4208-8787-0d77367e9eaf")
+PREDICTION_URL = os.getenv("PREDICTION_URL", "https://172.16.34.7:3000/api/v1/prediction/09ee3d2d-5d65-4793-a217-abd65e837366")
 
 # Health check route
 @app.get("/health")
@@ -164,7 +179,7 @@ def health_check(db: Session = Depends(get_db)):
         pass
         
     ai_ok = False
-    prediction_url = os.getenv("PREDICTION_URL", "https://forjinn.com/api/v1/prediction/249fc96e-5b62-4208-8787-0d77367e9eaf")
+    prediction_url = os.getenv("PREDICTION_URL", "https://172.16.34.7:3000/api/v1/prediction/09ee3d2d-5d65-4793-a217-abd65e837366")
     try:
         res = requests.head(prediction_url, timeout=5, verify=False)
         if res.status_code < 500:
@@ -477,18 +492,37 @@ def predict(
                 break
                 
             except Exception as exc:
-                if attempt == 0:
-                    print(f"[RETRY WARNING] Connection error inside event_generator: {str(exc)}. Retrying...")
-                    import uuid
-                    new_sid = f"session-{uuid.uuid4()}"
-                    bg_project = bg_db.query(Project).filter(Project.id == project_id).with_for_update().first()
-                    if bg_project:
-                        bg_project.forjinn_session_id = new_sid
-                        bg_project.session_id = new_sid
-                        bg_db.commit()
-                    current_payload["chatId"] = new_sid
-                    current_payload["overrideConfig"] = {"sessionId": new_sid}
-                    continue
+                print(f"[PREDICTION WARNING] Connection error targeting {PREDICTION_URL}: {str(exc)}")
+                target_port = os.getenv("PORT", "8000")
+                mock_url = f"http://127.0.0.1:{target_port}/api/mock-predict"
+                if PREDICTION_URL != mock_url:
+                    print(f"[PREDICTION FALLBACK] Retrying via local mock-predict service at {mock_url}...")
+                    try:
+                        response = requests.post(mock_url, json=current_payload, stream=True, timeout=10)
+                        for line in response.iter_lines():
+                            if line:
+                                line_str = line.decode("utf-8", "ignore").strip()
+                                if line_str.startswith("data:"):
+                                    try:
+                                        data_content = line_str[5:].strip()
+                                        chunk_data = json.loads(data_content)
+                                        if chunk_data.get("event") == "token":
+                                            token_val = chunk_data.get("data")
+                                            if isinstance(token_val, str):
+                                                ai_chunks.append(token_val)
+                                        elif chunk_data.get("event") == "metadata":
+                                            meta_data = chunk_data.get("data")
+                                            if isinstance(meta_data, dict):
+                                                new_sid = meta_data.get("chatId") or meta_data.get("sessionId")
+                                                if new_sid:
+                                                    stream_session_id = new_sid
+                                    except Exception:
+                                        pass
+                                    yield f"{line_str}\n\n"
+                        break
+                    except Exception as fallback_exc:
+                        print(f"[PREDICTION FALLBACK FAILED] {fallback_exc}")
+                        raise exc
                 else:
                     raise exc
             

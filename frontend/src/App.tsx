@@ -1048,6 +1048,10 @@ function App() {
                       messages: updatedMessages,
                     }
                   })
+                } else if (parsed.event && !['token', 'nextAgentFlow', 'metadata', 'error'].includes(parsed.event)) {
+                  // DEBUG: log any SSE event type the UI doesn't otherwise handle,
+                  // to identify which event carries tool/file output (e.g. officeWriter links).
+                  console.log('[SSE DEBUG] Unhandled event type:', parsed.event, parsed.data)
                 }
               } catch (e) {
                 console.error('Failed to parse SSE payload:', dataStr, e)

@@ -29,7 +29,9 @@ def request_with_retry(method: str, url: str, **kwargs):
     for attempt in range(1, max_retries + 1):
         try:
             if "timeout" not in kwargs:
-                kwargs["timeout"] = 90
+                kwargs["timeout"] = (5, 90)
+            elif isinstance(kwargs["timeout"], (int, float)):
+                kwargs["timeout"] = (5, kwargs["timeout"])
             response = requests.request(method, url, **kwargs)
             response.raise_for_status()
             return response
@@ -73,7 +75,7 @@ def validate_environment():
         sys.exit(1)
         
     # 3. Model Configuration & Endpoint
-    prediction_url = os.getenv("PREDICTION_URL", "https://forjinn.com/api/v1/prediction/249fc96e-5b62-4208-8787-0d77367e9eaf")
+    prediction_url = os.getenv("PREDICTION_URL", "https://172.16.34.7:3000/api/v1/prediction/09ee3d2d-5d65-4793-a217-abd65e837366")
     if not prediction_url:
         logger.critical("CRITICAL: PREDICTION_URL is not configured!", extra={"traceId": "startup"})
         sys.exit(1)
