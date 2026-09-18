@@ -1,9 +1,18 @@
 import { useEffect, useState, useRef, type FormEvent, type ChangeEvent } from 'react'
-import { API_BASE_URL } from './config';
+import { API_BASE_URL, unwrapApiResponse } from './config';
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import './App.css'
 import AdminPortal from './admin/AdminPortal'
+
+// The sign-in screen is skipped: the app silently authenticates as this account on
+// load instead of requiring a manual login. Change these to switch which account
+// the whole app runs as; the login form itself is left intact as a fallback below.
+// Deliberately not the admin account: logging in as ADMIN/SUPER_ADMIN auto-routes to
+// the admin panel, which has its own separate (currently unfixed) response-unwrapping
+// bug in its sub-components — see the unwrapApiResponse note in config.ts.
+const AUTO_LOGIN_EMAIL = 'ba@example.com'
+const AUTO_LOGIN_PASSWORD = 'ba123'
 
 type PageView = 'dashboard' | 'new-project' | 'interview' | 'review' | 'export' | 'admin'
 type MessageRole = 'ai' | 'user'
@@ -493,7 +502,7 @@ function App() {
         headers: { 'Authorization': `Bearer ${authToken}` }
       })
       if (response.ok) {
-        const list = await response.json()
+        const list = await unwrapApiResponse(response)
         setProjectsList(list)
         return list
       } else if (response.status === 401) {
@@ -512,7 +521,7 @@ function App() {
         headers: { 'Authorization': `Bearer ${token}` }
       })
       if (response.ok) {
-        const proj = await response.json()
+        const proj = await unwrapApiResponse(response)
         setActiveProjectId(id)
         localStorage.setItem('ba_bot_active_project_id', id.toString())
         setProjectData(sanitizeProjectData(proj))
@@ -535,7 +544,7 @@ function App() {
         headers: { 'Authorization': `Bearer ${token}` }
       })
       if (response.ok) {
-        const list = await response.json()
+        const list = await unwrapApiResponse(response)
         setProjectMembers(list)
       }
     } catch (error) {
@@ -583,7 +592,7 @@ function App() {
       })
       
       if (response.ok) {
-        const data = await response.json()
+        const data = await unwrapApiResponse(response)
         setNotice({ title: 'User Invited', detail: data.message })
         setInviteEmail('')
         void loadProjectMembers(activeProjectId)
@@ -605,7 +614,7 @@ function App() {
         headers: { 'Authorization': `Bearer ${token}` }
       })
       if (response.ok) {
-        const data = await response.json()
+        const data = await unwrapApiResponse(response)
         setProjectData(prev => ({ ...prev, status: data.new_status }))
         setNotice({ title: 'Project Submitted', detail: 'Project is now under review.' })
         setTimeout(() => setNotice(null), 1800)
@@ -627,7 +636,7 @@ function App() {
         body: JSON.stringify({ approved, feedback: reviewerFeedback })
       })
       if (response.ok) {
-        const data = await response.json()
+        const data = await unwrapApiResponse(response)
         setProjectData(prev => ({ ...prev, status: data.new_status }))
         setReviewerFeedback('')
         setNotice({ 
@@ -656,14 +665,14 @@ function App() {
         headers: { 'Authorization': `Bearer ${token}` }
       })
       if (uRes.ok) {
-        setUsersList(await uRes.json())
+        setUsersList(await unwrapApiResponse(uRes))
       }
       
       const lRes = await fetch(`${API_BASE_URL}/api/admin/audit-logs`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
       if (lRes.ok) {
-        setLogsList(await lRes.json())
+        setLogsList(await unwrapApiResponse(lRes))
       }
     } catch (e) {
       console.error("Failed to load admin data", e)
@@ -742,7 +751,25 @@ function App() {
   useEffect(() => {
     const fetchProfileAndProjects = async () => {
       if (!token) {
-        // If not logged in and requesting /admin, keep user on login page
+        // No manual sign-in step: log in as the default account automatically.
+        // setToken re-triggers this effect, which then proceeds as a normal
+        // authenticated load. If this fails (backend down, account missing),
+        // fall through to isLoaded(true) so the login form is still reachable.
+        try {
+          const loginRes = await fetch(`${API_BASE_URL}/api/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: AUTO_LOGIN_EMAIL, password: AUTO_LOGIN_PASSWORD })
+          })
+          if (loginRes.ok) {
+            const data = await unwrapApiResponse(loginRes)
+            localStorage.setItem('ba_bot_token', data.access_token)
+            setToken(data.access_token)
+            return
+          }
+        } catch (error) {
+          console.error('Auto-login failed', error)
+        }
         setIsLoaded(true)
         return
       }
@@ -751,7 +778,7 @@ function App() {
           headers: { 'Authorization': `Bearer ${token}` }
         })
         if (response.ok) {
-          const user = await response.json()
+          const user = await unwrapApiResponse(response)
           setCurrentUser(user)
           const list = await loadProjects(token)
           setIsLoaded(true)
@@ -1027,7 +1054,7 @@ function App() {
             headers: { 'Authorization': `Bearer ${token}` }
           })
           if (res.ok) {
-            const updatedProject = await res.json()
+            const updatedProject = await unwrapApiResponse(res)
             setProjectData(sanitizeProjectData(updatedProject))
           }
         } catch (err) {
@@ -1088,7 +1115,7 @@ function App() {
       })
       
       if (response.ok) {
-        const createdProj = await response.json()
+        const createdProj = await unwrapApiResponse(response)
         const newId = createdProj.id
         
         setActiveProjectId(newId)
@@ -1127,7 +1154,7 @@ function App() {
         body: JSON.stringify({ ...updatedProject, resetSession: true }),
       });
       if (response.ok) {
-        const freshProject = await response.json();
+        const freshProject = await unwrapApiResponse(response);
         setProjectData(sanitizeProjectData(freshProject));
         setNotice({ title: 'Chat Cleared', detail: 'Conversation history reset successfully.' });
       } else {
@@ -1224,7 +1251,7 @@ function App() {
         body: JSON.stringify({ email: loginEmail, password: loginPassword })
       })
       if (response.ok) {
-        const data = await response.json()
+        const data = await unwrapApiResponse(response)
         localStorage.setItem('ba_bot_token', data.access_token)
         setToken(data.access_token)
         setCurrentUser(data.user)
@@ -1271,7 +1298,7 @@ function App() {
           body: JSON.stringify({ email: regEmail, password: regPassword })
         })
         if (loginRes.ok) {
-          const data = await loginRes.json()
+          const data = await unwrapApiResponse(loginRes)
           localStorage.setItem('ba_bot_token', data.access_token)
           setToken(data.access_token)
           setCurrentUser(data.user)
