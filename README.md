@@ -60,193 +60,21 @@ Tracks total users/projects, AI token usage and estimated cost, a 7-day activity
 
 ## 🏗️ Architecture
 
-### High-level picture
-
-```mermaid
-flowchart LR
-    subgraph Browser["🖥️ Browser — React SPA (frontend/src)"]
-        UI["Dashboard / Interview Chat / Admin Portal"]
-    end
-
-    subgraph Backend["🐍 FastAPI Backend (backend/app.py)"]
-        MW["Middleware\n(trace ID + response envelope)"]
-        AUTH["Auth & Permission Layer\nauth/, dependencies/auth.py"]
-        ROUTES["Routes\nroutes/projects.py, routes/admin.py"]
-        SVC["Services\n(gap analysis, prompt building,\nstate management, summarization)"]
-    end
-
-    subgraph DB["🗄️ SQLite (ba_bot.db)"]
-        TABLES["Users · Projects · Messages\nTeams · AuditLog · DiscoverySection"]
-    end
-
-    subgraph LLM["🤖 Forjinn AI Flow (external)"]
-        PRED["Prediction API\n(chat + streaming)"]
-    end
-
-    UI -- "HTTP + JWT" --> MW --> AUTH --> ROUTES --> SVC
-    SVC <--> TABLES
-    SVC -- "POST question (SSE stream)" --> PRED
-    PRED -- "token stream" --> SVC
-    SVC -- "response" --> ROUTES --> MW -- "wrapped JSON / SSE" --> UI
-
-    ROUTES -. "export" .-> DOCS["📄 DOCX (python-docx) / PDF (reportlab)"]
-    DOCS --> UI
-```
-
-Every request passes through, in order: **(1)** global middleware stamps a trace ID and later wraps the response envelope ([`app.py:88-161`](backend/app.py#L88-L161)), **(2)** the auth/permission layer decides who's asking and what they can touch ([`dependencies/auth.py`](backend/dependencies/auth.py)), **(3)** the route handler does the work, usually by calling into `services/`.
-
-### Logging in
-
-```mermaid
-sequenceDiagram
-    participant U as User (Browser)
-    participant R as auth/routes.py
-    participant J as auth/jwt.py
-    participant DB as users table
-
-    U->>R: POST /api/auth/login {email, password}
-    R->>DB: look up User by email
-    DB-->>R: User row (password_hash)
-    R->>J: verify_password(password, hash)
-    alt invalid credentials or disabled account
-        R->>DB: log_action("permission denied")
-        R-->>U: 401 / 403 error
-    else valid
-        R->>J: create_access_token({sub: email, role, uid})
-        J-->>R: signed JWT (24h expiry)
-        R->>DB: update last_login, log_action("login")
-        R-->>U: { access_token, user }
-    end
-    Note over U: Browser stores the token and attaches it as<br/>Authorization: Bearer &lt;token&gt; on every future request
-```
-
-### Every protected request: the permission gate
-
 ```mermaid
 flowchart TD
-    A["Incoming request\nwith Authorization: Bearer token"] --> B{"get_current_user()\nToken valid? User exists?\nAccount not disabled?"}
-    B -- "No" --> B1["401 / 403"]
-    B -- "Yes" --> C{"Which guard does\nthis route use?"}
-
-    C -- "require_role([...])" --> D{"Is user\nSUPER_ADMIN/ADMIN,\nor in allowed_roles?"}
-    D -- "No" --> D1["403 + audit log"]
-    D -- "Yes" --> OK1["✅ proceed"]
-
-    C -- "require_project_access(min_role)" --> E{"Admin?"}
-    E -- "Yes" --> OK2["✅ proceed"]
-    E -- "No" --> F{"Project owner?"}
-    F -- "Yes" --> OK2
-    F -- "No" --> G{"Explicit\nProjectMember row?"}
-    G -- "Yes" --> H{"role >= min_role\nin hierarchy?"}
-    G -- "No" --> I{"User's team linked\nto project via TeamProject?"}
-    I -- "Yes" --> H
-    I -- "No" --> J1["403 + audit log"]
-    H -- "Yes" --> OK2
-    H -- "No" --> J1
-
-    C -- "require_project_owner" --> K{"Admin or\nliteral owner?"}
-    K -- "Yes" --> OK3["✅ proceed"]
-    K -- "No" --> K1["403 + audit log"]
+    A["👤 User logs in"] --> B["🗂️ Opens or creates a project"]
+    B --> C["💬 Chats with the AI interviewer"]
+    C --> D{"All sections\nanswered?"}
+    D -- "No — ask next question" --> C
+    D -- "Yes" --> E["📋 Reviews the captured requirements"]
+    E --> F["📄 Exports as Word / PDF document"]
+    F --> G["✅ Submits for approval"]
+    G --> H["🔒 Published & locked"]
 ```
 
-Role hierarchy: `PROJECT_MANAGER (4) > BUSINESS_ANALYST (3) > CONTRIBUTOR (2) > VIEWER (1)` — [`dependencies/auth.py:144-151`](backend/dependencies/auth.py#L144-L151).
+**In plain terms:** you log in, open a project, and just talk to the AI — it keeps asking questions until every section (stakeholders, requirements, constraints, etc.) is covered. Once done, you review what it captured, export it as a document, and send it through approval before it's published.
 
-### The AI interview turn (the core loop)
-
-Triggered by `POST /api/predict` ([`app.py:284-549`](backend/app.py#L284-L549)) on every chat message:
-
-```mermaid
-flowchart TD
-    U["User types a message"] --> P1["POST /api/predict"]
-    P1 --> P2["Resolve Project row\n(row-locked to avoid session races)"]
-    P2 --> P3{"Access allowed?\n& not locked?"}
-    P3 -- No --> ERR["403"]
-    P3 -- Yes --> P5["save_message(db, 'user', text)"]
-
-    P5 --> P6{"≥10 active messages?"}
-    P6 -- Yes --> P6a["Compress older messages into\nrolling summary, archive them"]
-    P6 -- No --> P7
-    P6a --> P7["gap_analyzer.py:\nwhich section is still missing?\n(dependency graph + question_order)"]
-
-    P7 --> P8["prompt_builder.py:\nbuild the LLM prompt\n(system prompt + state + active\nsection + summary + last 2 msgs\n+ last 5 asked questions)"]
-
-    P8 --> P9["POST to Forjinn (streaming SSE)\nrequest_with_retry:\n3 attempts, exponential backoff"]
-
-    P9 --> P10{"Response OK?"}
-    P10 -- "Session expired\n(1st attempt only)" --> P10a["Mint new session id,\nretry once"] --> P9
-    P10 -- "Connection failed" --> P10b["Fallback to local\n/api/mock-predict"]
-    P10 -- Success --> P11["Stream tokens to browser (SSE)"]
-    P10b --> P11
-
-    P11 --> P12["Save AI reply as Message"]
-    P12 --> P13["project_state_manager.py:\n2nd LLM call — 'what changed?'\nmerge delta into structured_state"]
-    P13 --> P14["Rebuild legacy payload, commit"]
-    P14 --> DONE["UI shows updated progress\n+ next question"]
-```
-
-**Why two LLM calls per turn?** One generates the conversational reply the user sees. A second, silent call extracts *only what changed* as structured JSON — that's what keeps requirements data machine-readable without a manual form.
-
-### Exporting the final document
-
-```mermaid
-flowchart TD
-    START["User clicks Export"] --> FORMAT{"format?"}
-
-    FORMAT -- "docx" --> D1["fdr_summary.py:\nONE LLM call — compress entire\ntranscript into fixed FDR_SCHEMA JSON"]
-    D1 --> D2["Sanitize list fields\n(malformed LLM output can't\ncrash the builder)"]
-    D2 --> D3["fdr_docx.py:\nfill a FIXED Word template\n(python-docx). Empty fields → [MISSING]"]
-    D3 --> OUT1["📄 .docx download"]
-
-    FORMAT -- "pdf" --> P1["Ask the LLM to WRITE a full\nMarkdown document from the state"]
-    P1 --> P2{"LLM reachable?"}
-    P2 -- No --> P2a["Fallback: local /api/mock-predict"]
-    P2 -- "Still fails" --> P2b["Fallback: raw JSON dump"]
-    P2 -- Yes --> P3["Markdown text"]
-    P2a --> P3
-    P2b --> P3
-    P3 --> P4["export.py: Markdown → PDF (reportlab)"]
-    P4 --> OUT2["📄 .pdf download"]
-```
-
-**Key difference:** `.docx` is *data-driven* — the AI only extracts facts into fixed JSON; layout is 100% code-controlled, so it's always consistent. `.pdf` is *AI-driven* — the AI writes the prose and structure itself; the code just renders whatever Markdown comes back.
-
-### How the data connects
-
-```mermaid
-erDiagram
-    User ||--o{ Project : owns
-    User ||--o{ ProjectMember : "is a member via"
-    User }o--|| Team : "belongs to"
-    Team ||--o{ TeamProject : "grants access via"
-    Project ||--o{ ProjectMember : has
-    Project ||--o{ TeamProject : "shared with"
-    Project ||--o{ Message : contains
-    Project ||--o{ AuditLog : generates
-    User ||--o{ AuditLog : performs
-    DiscoverySection ||..o{ Project : "configures the interview for"
-
-    Project {
-        int id
-        int owner_id
-        string status "DRAFT/PENDING_REVIEW/APPROVED/PUBLISHED"
-        text structured_state "JSON: requirements gathered so far"
-        text summary "rolling AI-generated summary"
-        string forjinn_session_id "LLM's own session memory key"
-        bool locked "frozen once PUBLISHED"
-    }
-    Message {
-        int id
-        string role "user | ai"
-        bool is_archived "true once folded into summary"
-    }
-    DiscoverySection {
-        string section_key
-        string prompt "LLM instructions for this topic"
-        int question_order
-    }
-```
-
-`Project.structured_state` is the single most important column in the system — the live JSON "memory" of the interview, managed by [`services/project_state_manager.py`](backend/services/project_state_manager.py) and read by `gap_analyzer.py`, `prompt_builder.py`, and `fdr_summary.py` to decide what to ask next and what goes in the final document.
+Behind the scenes, every chat message is permission-checked, sent to the AI together with a summary of what's already been discussed, and the AI's reply is scanned to update the project's data automatically. A more technical breakdown of that pipeline (prompts, retries, state extraction) lives in [`docs/architecture.md`](docs/architecture.md).
 
 ---
 
@@ -262,7 +90,7 @@ erDiagram
 | **Linting** | ESLint (flat config) | 10.x | `eslint.config.js`, incl. `react-hooks`/`react-refresh` plugins |
 | **Styling** | Vanilla CSS | — | Hand-written design system (`App.css`, `index.css`, `Admin.css`) |
 | **Math rendering** | KaTeX | 0.17 | Renders equations inside chat messages |
-| **HTTP client (frontend)** | Browser `fetch` + `EventSource`/manual SSE parsing | — | No HTTP client library added |
+| **HTTP client (frontend)** | Browser `fetch` + manual SSE parsing | — | No HTTP client library added |
 | **Backend framework** | FastAPI | 0.115 | Async REST API |
 | **ASGI server** | Uvicorn | 0.30 | Runs the FastAPI app, with `reload=True` outside production |
 | **ORM** | SQLAlchemy | 2.0 | Declarative models + session management |
