@@ -70,9 +70,10 @@ flowchart TD
     E --> F["📄 Exports as Word / PDF document"]
     F --> G["✅ Submits for approval"]
     G --> H["🔒 Published & locked"]
+    C -. "📄 can export anytime,\neven mid-interview —\ngaps just show as [MISSING]" .-> F
 ```
 
-**In plain terms:** you log in, open a project, and just talk to the AI — it keeps asking questions until every section (stakeholders, requirements, constraints, etc.) is covered. Once done, you review what it captured, export it as a document, and send it through approval before it's published.
+**In plain terms:** you log in, open a project, and just talk to the AI — it keeps asking questions until every section (stakeholders, requirements, constraints, etc.) is covered. Once done, you review what it captured, export it as a document, and send it through approval before it's published. **Exporting isn't gated on completion** — the dotted line shows you can generate a document at any point in the conversation, and whatever hasn't been discussed yet just shows up as `[MISSING]` instead of blocking the export.
 
 Behind the scenes, every chat message is permission-checked, sent to the AI together with a summary of what's already been discussed, and the AI's reply is scanned to update the project's data automatically. A more technical breakdown of that pipeline (prompts, retries, state extraction) lives in [`docs/architecture.md`](docs/architecture.md).
 
