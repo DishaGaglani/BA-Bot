@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+ba_bot.db
+uploads/
+e2e_results.json
+audit_results.json
+regression_results.json
+.env
+.env.*
+.DS_Store
+.git/

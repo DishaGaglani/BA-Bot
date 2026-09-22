@@ -1,10 +1,6 @@
-version: '3.8'
-
 services:
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: ba-backend:latest
     container_name: ba-backend
     restart: always
     environment:
@@ -23,9 +19,7 @@ services:
       - "8000"
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    image: ba-frontend:latest
     container_name: ba-frontend
     restart: always
     ports:
