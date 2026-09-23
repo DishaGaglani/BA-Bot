@@ -179,9 +179,40 @@ def run_migration():
             except sqlite3.OperationalError as e:
                 print(f"Warning during member role migration: {str(e)}")
 
+            # De-duplicate project_members before enforcing uniqueness below: repeated
+            # /invite calls for the same (project_id, user_id) pair could have inserted
+            # duplicate rows on databases created before this constraint existed.
+            try:
+                cursor.execute("""
+                    DELETE FROM project_members
+                    WHERE id NOT IN (
+                        SELECT MIN(id) FROM project_members GROUP BY project_id, user_id
+                    )
+                """)
+                if cursor.rowcount > 0:
+                    print(f"Removed {cursor.rowcount} duplicate project_members row(s) before adding unique constraint.")
+            except sqlite3.OperationalError as e:
+                print(f"Warning while de-duplicating project_members: {str(e)}")
+
+            # Add indexes / compound unique constraint that create_all() won't retrofit
+            # onto tables that already existed before these columns were indexed.
+            for index_sql in [
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_project_member_project_user ON project_members (project_id, user_id);",
+                "CREATE INDEX IF NOT EXISTS ix_project_members_project_id ON project_members (project_id);",
+                "CREATE INDEX IF NOT EXISTS ix_project_members_user_id ON project_members (user_id);",
+                "CREATE INDEX IF NOT EXISTS ix_messages_project_id ON messages (project_id);",
+                "CREATE INDEX IF NOT EXISTS ix_audit_logs_user_id ON audit_logs (user_id);",
+                "CREATE INDEX IF NOT EXISTS ix_audit_logs_project_id ON audit_logs (project_id);",
+            ]:
+                try:
+                    cursor.execute(index_sql)
+                except sqlite3.OperationalError as e:
+                    print(f"Warning while creating index ({index_sql}): {str(e)}")
+            print("Ensured foreign-key indexes and project_members unique constraint.")
+
             conn.commit()
             conn.close()
-            
+
         # Seed test users
         print("Ensuring default system users for all roles exist...")
         users_to_seed = [
