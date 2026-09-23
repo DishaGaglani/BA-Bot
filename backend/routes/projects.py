@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.exc import IntegrityError
 import sys
 import os
 
@@ -449,8 +450,22 @@ def invite_member(
         role=payload.role
     )
     db.add(member)
-    db.commit()
-    
+    try:
+        db.commit()
+    except IntegrityError:
+        # Another concurrent invite for the same (project_id, user_id) committed first;
+        # the unique constraint on project_members caught the race. Treat it as success
+        # rather than surfacing a 500 for what the caller already wanted.
+        db.rollback()
+        existing_member = db.query(ProjectMember).filter(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == invited_user.id
+        ).first()
+        if existing_member:
+            existing_member.role = payload.role
+            db.commit()
+        return {"status": "ok", "message": f"Updated {payload.email} role to {payload.role.value}"}
+
     log_action(
         db=db,
         user_id=current_user.id,
