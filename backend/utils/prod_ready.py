@@ -52,17 +52,20 @@ def validate_environment():
     
     # 1. JWT Secret
     jwt_secret = os.getenv("JWT_SECRET")
+    is_weak_secret = bool(jwt_secret) and (len(jwt_secret) < 32 or jwt_secret == "development_secret_key_change_me_in_production")
     if os.getenv("ENV") == "production":
         if not jwt_secret:
             logger.critical("CRITICAL: JWT_SECRET environment variable is missing in production environment!", extra={"traceId": "startup"})
             sys.exit(1)
-        if len(jwt_secret) < 32 or jwt_secret == "development_secret_key_change_me_in_production":
+        if is_weak_secret:
             logger.critical("CRITICAL: JWT_SECRET is insecure in production environment!", extra={"traceId": "startup"})
             sys.exit(1)
     else:
         if not jwt_secret:
-            logger.warning("Warning: JWT_SECRET is not set. Using default developer configurations.", extra={"traceId": "startup"})
-            
+            logger.warning("Warning: JWT_SECRET is not set. Using a random per-process secret (tokens won't survive a restart).", extra={"traceId": "startup"})
+        elif is_weak_secret:
+            logger.warning("Warning: JWT_SECRET is set but is short or a known placeholder value. This is unsafe if this environment is network-reachable.", extra={"traceId": "startup"})
+
     # 2. Database validation
     try:
         from sqlalchemy import text
