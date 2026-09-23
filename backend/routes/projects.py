@@ -80,11 +80,6 @@ def list_projects(
     result = []
     for p in db_projects:
         try:
-            # Auto-assign session_id if missing
-            if not p.session_id:
-                import uuid
-                p.session_id = f"session-{uuid.uuid4()}"
-                db.commit()
             result.append(get_legacy_payload(p))
         except Exception:
             pass
