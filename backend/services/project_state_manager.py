@@ -1,6 +1,7 @@
 import json
 import re
 import requests
+from pydantic import BaseModel, ConfigDict, model_validator
 from sqlalchemy.orm import Session
 import sys
 import os
@@ -58,6 +59,89 @@ def save_structured_state(db: Session, project: Project, state: dict):
     project.structured_state = json.dumps(state)
     db.commit()
 
+_LIST_OF_STRINGS_FIELDS = {
+    "business_requirements", "non_functional_requirements", "stakeholders",
+    "constraints", "assumptions", "risks", "integrations", "user_roles",
+}
+
+
+class FunctionalRequirementDelta(BaseModel):
+    title: str = ""
+    priority: str = "Medium"
+    confidence: float = 1.0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce(cls, data):
+        # The LLM sometimes returns a bare string instead of the {title, priority,
+        # confidence} object the prompt asks for; treat it as just the title.
+        if isinstance(data, str):
+            return {"title": data}
+        if not isinstance(data, dict):
+            return {}
+        return data
+
+
+class ProjectStateDelta(BaseModel):
+    """Schema for the per-turn delta the LLM returns. Only fields the interview
+    is actually meant to extract are declared here; anything else (including
+    internally-managed bookkeeping keys like completed_sections, which
+    update_project_state derives itself) is dropped rather than merged in."""
+    model_config = ConfigDict(extra="ignore")
+
+    project_name: str | None = None
+    industry: str | None = None
+    department: str | None = None
+    sponsor: str | None = None
+    business_unit: str | None = None
+    timeline: str | None = None
+    budget: str | None = None
+    business_requirements: list[str] | None = None
+    functional_requirements: list[FunctionalRequirementDelta] | None = None
+    non_functional_requirements: list[str] | None = None
+    stakeholders: list[str] | None = None
+    constraints: list[str] | None = None
+    assumptions: list[str] | None = None
+    risks: list[str] | None = None
+    integrations: list[str] | None = None
+    user_roles: list[str] | None = None
+    generated_summaries: str | None = None
+    next_question: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_types(cls, data):
+        """LLM output is untrusted, text-derived JSON: it frequently returns a
+        bare string where a list was expected (or vice versa). Coerce each
+        field into its expected shape instead of letting one malformed field
+        reject the entire delta and lose everything else the model extracted."""
+        if not isinstance(data, dict):
+            return {}
+        coerced = {}
+        for key, value in data.items():
+            if key not in cls.model_fields:
+                continue  # hallucinated/unknown key -> dropped
+            if key in _LIST_OF_STRINGS_FIELDS:
+                if isinstance(value, list):
+                    coerced[key] = [str(v) for v in value]
+                elif value not in (None, ""):
+                    coerced[key] = [str(value)]
+            elif key == "functional_requirements":
+                if isinstance(value, list):
+                    coerced[key] = value
+                elif value not in (None, ""):
+                    coerced[key] = [value]
+            else:
+                # Plain string-typed field
+                if isinstance(value, list):
+                    coerced[key] = ", ".join(str(v) for v in value)
+                elif isinstance(value, dict):
+                    coerced[key] = json.dumps(value)
+                elif value is not None:
+                    coerced[key] = str(value)
+        return coerced
+
+
 def clean_json_text(text: str) -> str:
     """Clean markdown code wrappers from JSON string."""
     text = text.strip()
@@ -103,9 +187,10 @@ def extract_delta_updates(user_msg: str, ai_reply: str, current_state: dict, act
             return {}
             
         clean_text = clean_json_text(extracted_text)
-        delta = json.loads(clean_text)
-        if isinstance(delta, dict):
-            return delta
+        raw_delta = json.loads(clean_text)
+        if isinstance(raw_delta, dict):
+            validated = ProjectStateDelta.model_validate(raw_delta)
+            return validated.model_dump(exclude_none=True)
     except Exception as e:
         print(f"Failed to extract delta updates: {str(e)}")
     return {}
