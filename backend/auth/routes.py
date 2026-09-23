@@ -18,7 +18,6 @@ class UserRegisterRequest(BaseModel):
     name: str
     email: EmailStr
     password: str
-    role: UserRole = UserRole.BUSINESS_ANALYST
 
 class UserLoginRequest(BaseModel):
     email: EmailStr
@@ -70,7 +69,7 @@ def register(payload: UserRegisterRequest, db: Session = Depends(get_db)):
         name=payload.name,
         email=payload.email,
         password_hash=pwd_hash,
-        role=payload.role
+        role=UserRole.BUSINESS_ANALYST
     )
     db.add(new_user)
     try:
