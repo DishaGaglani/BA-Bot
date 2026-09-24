@@ -1,3 +1,4 @@
+import asyncio
 import json
 import requests
 import urllib3
@@ -5,6 +6,8 @@ import os
 import sys
 import uuid
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -30,11 +33,13 @@ validate_environment()
 import auth.routes
 import routes.projects
 import routes.admin
+import routes.jobs
 from dependencies.auth import get_current_user, get_db
 from models import User, UserRole, Project, ProjectMember, ProjectMemberRole
 from services.audit import log_action
 from services.conversation_manager import save_message, get_active_messages
-from services.summary_manager import check_and_summarize
+from services.summary_manager import needs_summarization
+from services import job_handlers, job_queue
 from services.gap_analyzer import analyze_gaps
 from services.project_state_manager import get_structured_state, update_project_state, get_legacy_payload
 from services.prompt_builder import build_optimized_prompt, estimate_tokens
@@ -42,7 +47,17 @@ from services.prompt_builder import build_optimized_prompt, estimate_tokens
 # Disable SSL Warnings for self-signed certificates or proxy contexts
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-app = FastAPI(title="BA Bot API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Summarization and document export run on these background workers, not in request handlers.
+    job_queue.start_workers()
+    try:
+        yield
+    finally:
+        job_queue.stop_workers()
+
+
+app = FastAPI(title="BA Bot API", version="1.0.0", lifespan=lifespan)
 
 # Setup global exception handlers
 setup_global_exception_handlers(app)
@@ -164,6 +179,8 @@ async def standardize_responses_middleware(request: Request, call_next):
 app.include_router(auth.routes.router)
 app.include_router(routes.projects.router)
 app.include_router(routes.admin.router)
+app.include_router(routes.jobs.router)
+
 
 PREDICTION_URL = os.getenv("PREDICTION_URL", "https://172.16.34.7:3000/api/v1/prediction/09ee3d2d-5d65-4793-a217-abd65e837366")
 
@@ -281,6 +298,52 @@ class MessageRequest(BaseModel):
     projectId: int | None = None
     sessionId: str | None = None
 
+# The LLM call runs on this dedicated pool, not on the request thread, and keeps going if
+# the browser disconnects, so the AI reply is always saved and the project state updated.
+_llm_executor = ThreadPoolExecutor(max_workers=int(os.getenv("LLM_STREAM_WORKERS", "16")), thread_name_prefix="llm-stream")
+_STREAM_DONE = object()
+
+
+class _StreamFailure:
+    def __init__(self, exc: BaseException):
+        self.exc = exc
+
+
+async def _stream_from_worker(generator_factory):
+    """Run a blocking generator on _llm_executor and relay what it yields to the client.
+
+    If the client goes away this coroutine is closed, but the worker thread is not: it
+    keeps consuming the LLM stream to the end so the post-completion database updates
+    inside the generator still happen.
+    """
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def put(item):
+        try:
+            loop.call_soon_threadsafe(queue.put_nowait, item)
+        except RuntimeError:
+            pass  # event loop already closed (client gone / shutdown); keep working regardless
+
+    def pump():
+        try:
+            for item in generator_factory():
+                put(item)
+        except BaseException as exc:  # relayed to the client, matching the old in-request behaviour
+            put(_StreamFailure(exc))
+        finally:
+            put(_STREAM_DONE)
+
+    _llm_executor.submit(pump)
+    while True:
+        item = await queue.get()
+        if item is _STREAM_DONE:
+            return
+        if isinstance(item, _StreamFailure):
+            raise item.exc
+        yield item
+
+
 @app.post("/api/predict")
 def predict(
     payload: MessageRequest,
@@ -345,8 +408,17 @@ def predict(
     is_first_message = len(project.messages) == 0
     save_message(db, project.id, "user", payload.question)
     
-    # 3. Trigger rolling summarization (every 10 active messages)
-    check_and_summarize(db, project)
+    # 3. Queue rolling summarization (every 10 active messages). It runs on a background
+    # worker instead of blocking this request for a full LLM round trip. The key means at
+    # most one summarize job per project is queued or running at a time.
+    if needs_summarization(db, project.id):
+        job_queue.enqueue(
+            db,
+            job_handlers.SUMMARIZE,
+            project_id=project.id,
+            user_id=current_user.id,
+            idempotency_key=f"summarize:{project.id}",
+        )
     
     # 4. Fetch optimized conversation history window
     active_history = get_active_messages(db, project.id, limit=5)
@@ -546,7 +618,7 @@ def predict(
         finally:
             bg_db.close()
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(_stream_from_worker(event_generator), media_type="text/event-stream")
 
 
 if __name__ == "__main__":

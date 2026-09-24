@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { API_BASE_URL } from '../config';
+import { API_BASE_URL, exportDocument } from '../config';
 
 interface DocumentData {
   id: number;
@@ -44,14 +44,8 @@ const DocumentsPanel: React.FC<DocumentsPanelProps> = ({ token }) => {
 
   const handleDownload = async (projectId: number, format: string, projectName: string) => {
     try {
-      const formatParam = format.toLowerCase() === 'docx' ? 'word' : 'pdf';
-      const res = await fetch(`${API_BASE_URL}/api/projects/${projectId}/export?format=${formatParam}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) {
-        throw new Error('Export request failed');
-      }
-      const blob = await res.blob();
+      const formatParam = format.toLowerCase() === 'docx' ? 'docx' : 'pdf';
+      const { blob } = await exportDocument(projectId, formatParam, token);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

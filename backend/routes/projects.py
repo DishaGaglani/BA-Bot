@@ -18,7 +18,7 @@ from dependencies.auth import (
     require_project_access,
     require_project_owner
 )
-from utils.export import parse_markdown_to_pdf
+from services.export_service import UnsupportedFormat, generate_export
 from services.project_state_manager import get_legacy_payload, get_structured_state, DEFAULT_STATE
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -270,71 +270,16 @@ def export_project(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    """Synchronous export, kept for existing API clients.
 
-
-    session_id = project.session_id
-    project_name = project.name
-    state = get_structured_state(project)
-
-    if format.lower() == "docx":
-        from services.fdr_summary import generate_fdr_json
-        from utils.fdr_docx import build_fdr_docx
-
-        fdr_data = generate_fdr_json(project)
-        if not fdr_data.get("project_name"):
-            fdr_data["project_name"] = project_name
-        file_stream = build_fdr_docx(fdr_data)
-        filename = f"{project_name.replace(' ', '_')}_Requirement_Discovery_Form.docx"
-        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    elif format.lower() == "pdf":
-        prompt = (
-            f"The requirements interview discovery workshop is complete for project '{project_name}'.\n\n"
-            "Here is the final gathered Project Requirements State gathered during the interview:\n"
-            f"{json.dumps(state, indent=2)}\n\n"
-            "Please generate and compile the final, detailed, and polished Requirements Discovery Document (FDR) "
-            "containing all project information, overview, stakeholders, business problem, business goals, timeline, functional requirements, and constraints. "
-            "Format the output using clear Markdown headings, bullet points, and numbered lists."
-        )
-
-        payload = {
-            "question": prompt,
-            "streaming": False
-        }
-
-        try:
-            from utils.prod_ready import request_with_retry
-            response = request_with_retry("POST", PREDICTION_URL, json=payload, timeout=30, verify=False)
-            res_data = response.json()
-
-            document_text = res_data.get("text")
-            if not document_text:
-                output_obj = res_data.get("output")
-                if isinstance(output_obj, dict):
-                    document_text = output_obj.get("content", "")
-                elif isinstance(output_obj, str):
-                    document_text = output_obj
-                else:
-                    document_text = ""
-        except Exception as e:
-            print(f"[EXPORT WARNING] Failed to connect to {PREDICTION_URL}: {str(e)}. Falling back to local generation...")
-            target_port = os.getenv("PORT", "8000")
-            mock_url = f"http://127.0.0.1:{target_port}/api/mock-predict"
-            try:
-                res_mock = requests.post(mock_url, json=payload, timeout=10)
-                mock_data = res_mock.json()
-                document_text = mock_data.get("text")
-            except Exception:
-                document_text = None
-
-            if not document_text:
-                document_text = f"# Final Discovery Requirements (FDR)\n\n## Project: {project_name}\n\n### Requirements Overview\n" + json.dumps(state, indent=2)
-
-        file_stream = parse_markdown_to_pdf(document_text)
-        filename = f"{project_name.replace(' ', '_')}_Requirements.pdf"
-        media_type = "application/pdf"
-    else:
+    Generation can take tens of seconds and holds a server thread for that long.
+    The web app uses POST /api/projects/{id}/export-jobs (background job) instead.
+    """
+    try:
+        file_stream, filename, media_type = generate_export(project, format, allow_fallback=True)
+    except UnsupportedFormat:
         raise HTTPException(status_code=400, detail="Invalid format. Supported: docx, pdf")
-        
+
     # Log document generation in AuditLog
     log_action(
         db=db,

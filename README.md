@@ -248,12 +248,21 @@ See [`DOCKER_INSTRUCTIONS.md`](DOCKER_INSTRUCTIONS.md) for environment configura
 | `POST` | `` | Create a project |
 | `PUT` | `/{id}` | Update a project (or reset its session) |
 | `DELETE` | `/{id}` | Delete a project (owner/admin only) |
-| `GET` | `/{id}/export?format=docx\|pdf` | Export the requirements document |
+| `POST` | `/{id}/export-jobs?format=docx\|pdf` | Queue a document export (returns `202` + `job_id`) |
+| `GET` | `/{id}/export?format=docx\|pdf` | Synchronous export (legacy; blocks for the whole generation) |
 | `POST` | `/{id}/submit` | Move to `PENDING_REVIEW` |
 | `POST` | `/{id}/review` | Approve/reject (Reviewer/Admin only) |
 | `POST` | `/{id}/publish` | Publish + lock (approved projects only) |
 | `POST` | `/{id}/invite` | Invite a member with a specific project role |
 | `GET` | `/{id}/members` | List project members |
+
+### Background jobs — `/api/jobs`
+| Method | Route | Description |
+|---|---|---|
+| `GET` | `/{job_id}` | Job status: `queued` → `processing` → `completed` / `failed` |
+| `GET` | `/{job_id}/download` | Download a completed export |
+
+Long-running work (document export, rolling conversation summarization) runs on background worker threads backed by the `jobs` table (no Redis/broker needed). Failed jobs retry with exponential backoff, duplicate requests are collapsed with an idempotency key, and a job whose worker dies is re-queued when its lease expires. Tunables (all optional): `JOB_WORKERS` (2), `JOB_MAX_ATTEMPTS` (3), `JOB_BACKOFF_BASE_SECONDS` (5), `JOB_BACKOFF_MAX_SECONDS` (300), `JOB_LEASE_SECONDS` (600), `JOB_RETENTION_DAYS` (7), `LLM_STREAM_WORKERS` (16). Export files are written to `UPLOAD_DIR/exports/`.
 
 ### AI — top-level
 | Method | Route | Description |
@@ -306,7 +315,7 @@ The frontend still consumes an older, flatter JSON shape (`project`/`overview`/`
 
 - **`PREDICTION_URL`'s default value is duplicated** across five files (`app.py`, `routes/projects.py`, `services/summary_manager.py`, `services/project_state_manager.py`, `services/fdr_summary.py`) instead of a single shared config constant.
 - **The `role_permissions.json` matrix** (editable from Admin → Roles & Permissions) doesn't appear to be checked anywhere in actual route logic — access control is enforced via `require_role`/`require_project_access` instead, so the matrix may currently be informational only.
-- **`backend/uploads/`** is created and write-tested at startup but nothing currently writes files into it — provisioned for a file-upload feature that doesn't exist yet.
+- **`backend/uploads/`** holds generated export files (`uploads/exports/`), which are purged after `JOB_RETENTION_DAYS`. There is no user file-upload feature.
 - **Two "system prompt" layers exist**: one configured inside the Forjinn flow itself, one built in `prompt_builder.py`. The latter's real value is injecting per-turn state Forjinn's static prompt can't know (what's done, what's next) — persona/tone instructions there risk duplicating whatever's already set in Forjinn.
 - **No automated tests run in CI** — `e2e_tester.py` must be run manually against a live server.
 
