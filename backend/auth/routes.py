@@ -11,6 +11,7 @@ from models import User, UserRole
 from auth.jwt import hash_password, verify_password, create_access_token
 from services.audit import log_action
 from dependencies.auth import get_current_user, get_db
+from utils.clock import utcnow
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -127,8 +128,7 @@ def login(payload: UserLoginRequest, db: Session = Depends(get_db)):
     token = create_access_token(data=token_data)
     
     # Update last login time
-    import datetime
-    user.last_login = datetime.datetime.utcnow()
+    user.last_login = utcnow()
     db.commit()
     
     # Log successful login
