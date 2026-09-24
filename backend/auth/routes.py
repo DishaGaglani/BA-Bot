@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 import sys
@@ -41,7 +41,7 @@ class LoginResponse(BaseModel):
 
 @router.post("/register", response_model=UserResponse)
 @limiter.limit("5/minute")
-def register(request: Request, payload: UserRegisterRequest, db: Session = Depends(get_db)):
+def register(request: Request, response: Response, payload: UserRegisterRequest, db: Session = Depends(get_db)):
     # Check if self-registration is enabled in system settings
     settings_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "system_settings.json")
     if os.path.exists(settings_path):
@@ -97,7 +97,7 @@ def register(request: Request, payload: UserRegisterRequest, db: Session = Depen
 
 @router.post("/login", response_model=LoginResponse)
 @limiter.limit("5/minute")
-def login(request: Request, payload: UserLoginRequest, db: Session = Depends(get_db)):
+def login(request: Request, response: Response, payload: UserLoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == payload.email).first()
     if not user or not verify_password(payload.password, user.password_hash):
         # Log failed login attempt
