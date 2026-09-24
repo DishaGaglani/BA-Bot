@@ -18,7 +18,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from database import engine, SessionLocal
 from utils.migrate import run_migration
-from utils.prod_ready import validate_environment, setup_global_exception_handlers, logger, request_with_retry
+from utils.prod_ready import validate_environment, setup_global_exception_handlers, logger, request_with_retry, MAX_REQUEST_BODY_BYTES, make_error_response
+from utils.rate_limit import limiter
 
 # Run database migrations and seed default data on startup
 run_migration()
@@ -46,6 +47,9 @@ app = FastAPI(title="BA Bot API", version="1.0.0")
 
 # Setup global exception handlers
 setup_global_exception_handlers(app)
+
+# Rate limiting (brute-force / LLM-cost / spam protection on sensitive endpoints)
+app.state.limiter = limiter
 
 allowed_origins = [
     "http://localhost:5173",
@@ -92,7 +96,20 @@ async def standardize_responses_middleware(request: Request, call_next):
 
     trace_id = str(uuid.uuid4())
     request.state.trace_id = trace_id
-    
+
+    # Reject oversized bodies before they're read into memory. This checks the
+    # client-supplied Content-Length header, so it doesn't catch a request sent
+    # with chunked transfer-encoding and no Content-Length — a true streaming
+    # byte-count cap would be needed to close that gap.
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > MAX_REQUEST_BODY_BYTES:
+        return make_error_response(
+            f"Request body exceeds the {MAX_REQUEST_BODY_BYTES}-byte limit.",
+            "PAYLOAD_TOO_LARGE",
+            trace_id,
+            413
+        )
+
     # Simple user identification check if token is supplied
     user_id = "anonymous"
     auth_header = request.headers.get("Authorization")
@@ -282,7 +299,9 @@ class MessageRequest(BaseModel):
     sessionId: str | None = None
 
 @app.post("/api/predict")
+@limiter.limit("20/minute")
 def predict(
+    request: Request,
     payload: MessageRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
