@@ -2,11 +2,13 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App'
+import { withTraceHeaders, reportFailedRequest } from './telemetry'
 
 // Intercept all fetch requests to transparently unwrap standardized successful API responses
 const originalFetch = window.fetch;
-window.fetch = async function(...args) {
-  const response = await originalFetch(...args);
+window.fetch = async function(input, init) {
+  const response = await originalFetch(...withTraceHeaders(input, init));
+  reportFailedRequest(input, response);
   const clone = response.clone();
   try {
     const contentType = response.headers.get("content-type");

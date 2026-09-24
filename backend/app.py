@@ -19,12 +19,18 @@ from sqlalchemy.orm import Session, joinedload
 from database import engine, SessionLocal
 from utils.migrate import run_migration
 from utils.prod_ready import validate_environment, setup_global_exception_handlers, logger, request_with_retry
+from utils import metrics, observability
 
 # Run database migrations and seed default data on startup
 run_migration()
 
 # Validate environment variables on startup
 validate_environment()
+
+# Error tracking first, so anything that fails during the rest of startup is reported too.
+observability.setup_error_tracking()
+observability.install_thread_excepthook()
+metrics.init_metrics(engine, version="1.0.0", environment=os.getenv("ENV", "development"))
 
 # Import route handlers
 import auth.routes
@@ -72,6 +78,8 @@ cors_kwargs = {
     "allow_credentials": True,
     "allow_methods": ["*"],
     "allow_headers": ["*"],
+    # Lets browser code read the trace id (and the export filename) from cross-origin responses.
+    "expose_headers": ["X-Trace-Id", "Content-Disposition"],
 }
 
 if is_prod:
@@ -90,9 +98,13 @@ async def standardize_responses_middleware(request: Request, call_next):
     if request.method == "OPTIONS":
         return await call_next(request)
 
-    trace_id = str(uuid.uuid4())
+    # Reuse the caller's W3C trace context when there is one, so a browser request, the
+    # backend logs and the exported trace share a single id.
+    trace_id = observability.resolve_trace_id(request.headers)
     request.state.trace_id = trace_id
-    
+    observability.tag_request(trace_id)
+    trace_token = observability.trace_id_var.set(trace_id)
+
     # Simple user identification check if token is supplied
     user_id = "anonymous"
     auth_header = request.headers.get("Authorization")
@@ -103,17 +115,29 @@ async def standardize_responses_middleware(request: Request, call_next):
             payload = decode_access_token(token)
             if payload and "sub" in payload:
                 user_id = payload["sub"]
+                metrics.mark_user_active(user_id)
         except Exception:
             pass
-            
+
     start_time = time.time()
+    metrics.HTTP_IN_PROGRESS.inc()
     try:
         response = await call_next(request)
-    except Exception as exc:
-        raise exc
-        
+    except Exception:
+        # Unhandled errors are turned into a 500 by the exception handler *outside* this
+        # middleware, so count them here before they propagate.
+        metrics.record_http(request.method, metrics.route_label(request.scope), 500, time.time() - start_time)
+        raise
+    finally:
+        metrics.HTTP_IN_PROGRESS.dec()
+        observability.trace_id_var.reset(trace_token)
+
     process_time = (time.time() - start_time) * 1000
-    
+    route = metrics.route_label(request.scope)
+    if route != "/metrics":
+        metrics.record_http(request.method, route, response.status_code, process_time / 1000)
+    response.headers["X-Trace-Id"] = trace_id
+
     # Log trace information: Request ID, User ID, Endpoint, Response Time, Status Code
     logger.info(
         f"user_id={user_id} endpoint={request.url.path} status_code={response.status_code} response_time={process_time:.2f}ms",
@@ -164,6 +188,24 @@ async def standardize_responses_middleware(request: Request, call_next):
 app.include_router(auth.routes.router)
 app.include_router(routes.projects.router)
 app.include_router(routes.admin.router)
+
+# Tracing wraps the finished middleware stack, so it must come after the middleware above.
+# Enabled by OTEL_EXPORTER_OTLP_ENDPOINT; otherwise this is a no-op.
+observability.setup_tracing(app, engine)
+
+
+@app.get("/metrics", include_in_schema=False)
+def prometheus_metrics(request: Request):
+    """Prometheus scrape endpoint. Not proxied by the bundled Nginx config, so it is only
+    reachable from inside the Docker network; set METRICS_TOKEN to also require a bearer token."""
+    expected = os.getenv("METRICS_TOKEN")
+    if expected:
+        import hmac
+        supplied = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+        if not hmac.compare_digest(supplied.encode(), expected.encode()):
+            raise HTTPException(status_code=401, detail="Invalid or missing metrics token")
+    body, content_type = metrics.render()
+    return Response(content=body, media_type=content_type)
 
 PREDICTION_URL = os.getenv("PREDICTION_URL", "https://172.16.34.7:3000/api/v1/prediction/09ee3d2d-5d65-4793-a217-abd65e837366")
 
@@ -372,15 +414,10 @@ def predict(
     history_size = sum(len(m.text) for m in active_history)
     est_tokens = estimate_tokens(optimized_prompt)
     
-    print("================== PROMPT SIZE LOGGING ==================")
-    print(f"Project ID: {project.id}")
-    print(f"Target Section Focus: {gaps.get('current_section')}")
-    print(f"Input Token Estimate: ~{est_tokens}")
-    print(f"Full Prompt Size: {prompt_size} chars")
-    print(f"Conversation Summary Size: {summary_size} chars")
-    print(f"Structured Project State Size: {state_size} chars")
-    print(f"Active History Size: {history_size} chars")
-    print("=========================================================")
+    logger.info(
+        f"prompt built: project={project.id} section={gaps.get('current_section')} est_tokens={est_tokens} "
+        f"prompt_chars={prompt_size} summary_chars={summary_size} state_chars={state_size} history_chars={history_size}"
+    )
 
     # 8. Log conversation started if first message
     if is_first_message:
@@ -404,7 +441,7 @@ def predict(
     project_id = project.id
     question = payload.question
 
-    def event_generator():
+    def _chat_events():
         from database import SessionLocal
         bg_db = SessionLocal()
         ai_chunks = []
@@ -428,7 +465,7 @@ def predict(
                     if attempt == 0:
                         import uuid
                         new_sid = f"session-{uuid.uuid4()}"
-                        print(f"[RETRY WARNING] Forjinn session expired/not found. Re-creating session: {new_sid}. Error: {err_msg}")
+                        logger.warning(f"Forjinn session expired/not found. Re-creating session: {new_sid}. Error: {err_msg[:300]}")  # capped: upstream errors can echo the prompt
                         # Persist new session ID in the database
                         bg_project = bg_db.query(Project).filter(Project.id == project_id).with_for_update().first()
                         if bg_project:
@@ -476,7 +513,7 @@ def predict(
                 if session_expired_in_stream and attempt == 0:
                     import uuid
                     new_sid = f"session-{uuid.uuid4()}"
-                    print(f"[RETRY WARNING] Stream error event: Session expired/not found. Re-creating session: {new_sid}")
+                    logger.warning(f"Stream error event: Session expired/not found. Re-creating session: {new_sid}")
                     bg_project = bg_db.query(Project).filter(Project.id == project_id).with_for_update().first()
                     if bg_project:
                         bg_project.forjinn_session_id = new_sid
@@ -492,11 +529,11 @@ def predict(
                 break
                 
             except Exception as exc:
-                print(f"[PREDICTION WARNING] Connection error targeting {PREDICTION_URL}: {str(exc)}")
+                logger.warning(f"Connection error targeting {PREDICTION_URL}: {str(exc)}")
                 target_port = os.getenv("PORT", "8000")
                 mock_url = f"http://127.0.0.1:{target_port}/api/mock-predict"
                 if PREDICTION_URL != mock_url:
-                    print(f"[PREDICTION FALLBACK] Retrying via local mock-predict service at {mock_url}...")
+                    logger.warning(f"Retrying via local mock-predict service at {mock_url}...")
                     try:
                         response = requests.post(mock_url, json=current_payload, stream=True, timeout=10)
                         for line in response.iter_lines():
@@ -521,7 +558,7 @@ def predict(
                                     yield f"{line_str}\n\n"
                         break
                     except Exception as fallback_exc:
-                        print(f"[PREDICTION FALLBACK FAILED] {fallback_exc}")
+                        logger.error(f"Local mock-predict fallback failed: {fallback_exc}")
                         raise exc
                 else:
                     raise exc
@@ -529,6 +566,7 @@ def predict(
         # Post-chat completion processing using the dedicated background session
         try:
             ai_reply = "".join(ai_chunks).strip()
+            metrics.record_llm_tokens("chat", output_tokens=metrics.estimate_tokens(ai_reply))
             if ai_reply:
                 bg_project = bg_db.query(Project).options(joinedload(Project.messages)).filter(Project.id == project_id).first()
                 if bg_project:
@@ -540,11 +578,29 @@ def predict(
                     legacy_payload = get_legacy_payload(bg_project)
                     bg_project.data = json.dumps(legacy_payload)
                     bg_db.commit()
-                    print(f"State updates completed successfully for project {bg_project.id}.")
+                    logger.info(f"State updates completed successfully for project {bg_project.id}.")
         except Exception as exc:
-            print(f"Post-chat update failed: {str(exc)}")
+            logger.error(f"Post-chat update failed: {str(exc)}", exc_info=True)
+            observability.capture_exception(exc, source="post_chat_update", project_id=project_id)
         finally:
             bg_db.close()
+
+    def event_generator():
+        # Wraps the stream with metrics: how many replies are in flight, and how long each took.
+        metrics.CHAT_STREAMS_ACTIVE.inc()
+        started = time.perf_counter()
+        outcome = "success"
+        try:
+            yield from _chat_events()
+        except GeneratorExit:
+            outcome = "client_disconnect"
+            raise
+        except BaseException:
+            outcome = "error"
+            raise
+        finally:
+            metrics.CHAT_STREAMS_ACTIVE.dec()
+            metrics.record_llm_call("chat_stream", time.perf_counter() - started, outcome)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

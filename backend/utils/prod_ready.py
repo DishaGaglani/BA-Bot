@@ -2,6 +2,7 @@ import os
 import sys
 import uuid
 import time
+from time import perf_counter  # bound by name: tests replace this module's `time` with a stub that only has sleep()
 import json
 import logging
 import requests
@@ -22,29 +23,47 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ba-bot")
 
+# Every log line carries the current request's trace id and is scrubbed of credentials.
+from utils import metrics, observability
+observability.configure_logging()
+
 # --- Retries with Exponential Backoff ---
 def request_with_retry(method: str, url: str, **kwargs):
     max_retries = 3
     backoff = 1.0  # seconds
-    for attempt in range(1, max_retries + 1):
-        try:
-            if "timeout" not in kwargs:
-                kwargs["timeout"] = (5, 90)
-            elif isinstance(kwargs["timeout"], (int, float)):
-                kwargs["timeout"] = (5, kwargs["timeout"])
-            response = requests.request(method, url, **kwargs)
-            response.raise_for_status()
-            return response
-        except (requests.exceptions.RequestException, requests.exceptions.Timeout) as exc:
-            if attempt == max_retries:
-                logger.error(f"Request to {url} failed after {max_retries} attempts: {str(exc)}", extra={"traceId": "system"})
-                raise exc
-            sleep_time = backoff * (2 ** (attempt - 1))
-            logger.warning(
-                f"Request to {url} failed (attempt {attempt}/{max_retries}). Retrying in {sleep_time}s... Error: {str(exc)}",
-                extra={"traceId": "system"}
-            )
-            time.sleep(sleep_time)
+    raw_json = kwargs.get("json")
+    payload: dict = raw_json if isinstance(raw_json, dict) else {}
+    operation = "stream_connect" if payload.get("streaming") else "completion"
+    prompt_tokens = metrics.estimate_tokens(str(payload.get("question", "")))
+    started = perf_counter()
+    with observability.span("llm.call", **{"llm.operation": operation, "llm.prompt_tokens_estimate": prompt_tokens}):
+        for attempt in range(1, max_retries + 1):
+            try:
+                if "timeout" not in kwargs:
+                    kwargs["timeout"] = (5, 90)
+                elif isinstance(kwargs["timeout"], (int, float)):
+                    kwargs["timeout"] = (5, kwargs["timeout"])
+                response = requests.request(method, url, **kwargs)
+                response.raise_for_status()
+                metrics.record_llm_call(operation, perf_counter() - started, "success")
+                if operation == "completion":
+                    metrics.record_llm_tokens(
+                        "completion", input_tokens=prompt_tokens, output_tokens=metrics.estimate_tokens(response.text or "")
+                    )
+                else:
+                    metrics.record_llm_tokens("chat", input_tokens=prompt_tokens)  # output is counted when the reply completes
+                return response
+            except (requests.exceptions.RequestException, requests.exceptions.Timeout) as exc:
+                if attempt == max_retries:
+                    metrics.record_llm_call(operation, perf_counter() - started, "error")
+                    logger.error(f"Request to {url} failed after {max_retries} attempts: {str(exc)}")
+                    raise exc
+                metrics.LLM_RETRIES.labels(operation=operation).inc()
+                sleep_time = backoff * (2 ** (attempt - 1))
+                logger.warning(
+                    f"Request to {url} failed (attempt {attempt}/{max_retries}). Retrying in {sleep_time}s... Error: {str(exc)}"
+                )
+                time.sleep(sleep_time)
 
 # --- Environment Validation ---
 def validate_environment():
@@ -102,7 +121,8 @@ def make_error_response(message: str, error_code: str, trace_id: str, status_cod
             "message": message,
             "errorCode": error_code,
             "traceId": trace_id
-        }
+        },
+        headers={"X-Trace-Id": trace_id}
     )
 
 def setup_global_exception_handlers(app):
@@ -122,4 +142,7 @@ def setup_global_exception_handlers(app):
     async def generic_exception_handler(request: Request, exc: Exception):
         trace_id = getattr(request.state, "trace_id", str(uuid.uuid4()))
         logger.exception(f"Unhandled Exception: {str(exc)}", extra={"traceId": trace_id})
+        metrics.UNHANDLED_EXCEPTIONS.labels(source="http").inc()
+        # No explicit Sentry call: its Starlette integration already reports unhandled route
+        # exceptions (scrubbed by before_send, tagged with this trace id by the middleware).
         return make_error_response("An unexpected internal server error occurred.", "INTERNAL_SERVER_ERROR", trace_id, 500)
