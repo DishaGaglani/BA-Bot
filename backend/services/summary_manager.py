@@ -9,16 +9,29 @@ from services.conversation_manager import get_unarchived_messages
 
 PREDICTION_URL = os.getenv("PREDICTION_URL", "https://172.16.34.7:3000/api/v1/prediction/09ee3d2d-5d65-4793-a217-abd65e837366")
 
-def check_and_summarize(db: Session, project: Project) -> bool:
+SUMMARY_THRESHOLD = 10  # unarchived messages before older ones are folded into the summary
+
+
+def needs_summarization(db: Session, project_id: int) -> bool:
+    """Cheap check used by the request path to decide whether to enqueue a summarize job."""
+    return len(get_unarchived_messages(db, project_id)) >= SUMMARY_THRESHOLD
+
+
+def check_and_summarize(db: Session, project: Project, raise_on_error: bool = False) -> bool:
     """
     Check if the active conversation has 10 or more non-archived messages.
     If so, call Forjinn to merge the older messages (older than the last 5)
     into the rolling summary and archive them.
+
+    Safe to call repeatedly: the summary update and the archiving happen in one
+    transaction, and once messages are archived the threshold check is a no-op.
+    With raise_on_error=True failures are re-raised (after rollback) instead of
+    swallowed, so the job queue can retry them.
     """
     unarchived = get_unarchived_messages(db, project.id)
     
     # We only summarize if we have 10 or more active messages
-    if len(unarchived) < 10:
+    if len(unarchived) < SUMMARY_THRESHOLD:
         return False
         
     # We keep the last 5 messages active/raw, and summarize the rest
@@ -64,6 +77,8 @@ def check_and_summarize(db: Session, project: Project) -> bool:
                 
         if not summary_text:
             print("Warning: Summarization service returned empty text.")
+            if raise_on_error:
+                raise RuntimeError("Summarization service returned empty text")
             return False
             
         # Update project summary in DB
@@ -80,4 +95,6 @@ def check_and_summarize(db: Session, project: Project) -> bool:
     except Exception as e:
         print(f"Failed to perform auto-summarization: {str(e)}")
         db.rollback()
+        if raise_on_error:
+            raise
         return False

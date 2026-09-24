@@ -1,6 +1,6 @@
 import datetime
 import enum
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Enum as SqlEnum
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Index, Enum as SqlEnum
 from sqlalchemy.orm import relationship
 import sys
 import os
@@ -150,3 +150,32 @@ class DiscoverySection(Base):
     question_order = Column(Integer, default=1, nullable=False)
     default_value = Column(Text, nullable=True)
     validation_rules = Column(Text, nullable=True)
+
+
+class Job(Base):
+    """A unit of background work (rolling summarization, document export).
+
+    Rows are the queue: workers claim `queued` rows whose next_run_at has passed.
+    `idempotency_key` is unique, so enqueueing the same logical work twice returns
+    the existing job instead of creating a duplicate.
+    """
+    __tablename__ = "jobs"
+
+    id = Column(String, primary_key=True)  # uuid4 hex; also the public job id
+    type = Column(String, nullable=False)  # 'summarize' | 'export'
+    status = Column(String, nullable=False, default="queued")  # queued | processing | completed | failed
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # who requested it
+    idempotency_key = Column(String, unique=True, nullable=True)
+    payload = Column(Text, nullable=True)  # JSON input
+    result = Column(Text, nullable=True)  # JSON output (e.g. file location for exports)
+    error = Column(Text, nullable=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    max_attempts = Column(Integer, nullable=False, default=3)
+    next_run_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+    locked_until = Column(DateTime, nullable=True)  # lease; an expired lease means the worker died
+    created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+    finished_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (Index("ix_jobs_status_next_run", "status", "next_run_at"),)

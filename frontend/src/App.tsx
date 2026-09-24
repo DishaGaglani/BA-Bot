@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, type FormEvent, type ChangeEvent } from 'react'
-import { API_BASE_URL, unwrapApiResponse } from './config';
+import { API_BASE_URL, unwrapApiResponse, exportDocument } from './config';
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import './App.css'
@@ -1201,15 +1201,7 @@ function App() {
       setIsLoading(true)
       
       try {
-        const response = await fetch(`${API_BASE_URL}/api/projects/${activeProjectId}/export?format=${format}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        })
-        
-        if (!response.ok) {
-          throw new Error('Export request failed')
-        }
-        
-        const blob = await response.blob()
+        const { blob } = await exportDocument(activeProjectId, format, token)
         const url = window.URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
