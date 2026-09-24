@@ -9,11 +9,18 @@ from dotenv import load_dotenv
 from fastapi import Request, Response, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy.orm import Session
 from database import SessionLocal
 
 # Load environment variables
 load_dotenv()
+
+# Requests with a larger Content-Length than this are rejected before their body
+# is read, so a client can't force the server to buffer an arbitrarily large
+# payload into memory. Default 2MB comfortably covers this app's largest
+# legitimate request bodies (chat messages, project state updates).
+MAX_REQUEST_BODY_BYTES = int(os.getenv("MAX_REQUEST_BODY_BYTES", str(2 * 1024 * 1024)))
 
 # Configure logging
 logging.basicConfig(
@@ -106,6 +113,19 @@ def make_error_response(message: str, error_code: str, trace_id: str, status_cod
     )
 
 def setup_global_exception_handlers(app):
+    @app.exception_handler(RateLimitExceeded)
+    async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+        trace_id = getattr(request.state, "trace_id", str(uuid.uuid4()))
+        logger.warning(f"Rate limit exceeded: {exc.detail}", extra={"traceId": trace_id})
+        response = make_error_response(
+            f"Too many requests: {exc.detail}", "RATE_LIMIT_EXCEEDED", trace_id, 429
+        )
+        # Preserve slowapi's Retry-After / X-RateLimit-* headers on our own error shape
+        limiter = getattr(request.app.state, "limiter", None)
+        if limiter is not None:
+            response = limiter._inject_headers(response, request.state.view_rate_limit)
+        return response
+
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
         trace_id = getattr(request.state, "trace_id", str(uuid.uuid4()))
