@@ -1,11 +1,11 @@
 import json
-import datetime
 from sqlalchemy.orm import Session
 import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models import AuditLog
+from utils.clock import utcnow
 
 def log_action(
     db: Session,
@@ -21,7 +21,7 @@ def log_action(
         user_id=user_id,
         action=action,
         project_id=project_id,
-        timestamp=datetime.datetime.utcnow(),
+        timestamp=utcnow(),
         metadata_json=metadata_str
     )
     db.add(db_log)

@@ -1,10 +1,10 @@
 from sqlalchemy.orm import Session
-import datetime
 import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models import Message
+from utils.clock import utcnow
 
 def save_message(db: Session, project_id: int, role: str, text: str) -> Message:
     """Save a single conversation message in the database."""
@@ -14,7 +14,7 @@ def save_message(db: Session, project_id: int, role: str, text: str) -> Message:
         text=text,
         is_archived=False,
         token_count=len(text) // 4,
-        created_at=datetime.datetime.utcnow()
+        created_at=utcnow()
     )
     db.add(message)
     try:

@@ -9,6 +9,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models import User, UserRole, AuditLog, Project, Message, ProjectMember, ProjectMemberRole, Team, TeamProject, DiscoverySection
 from dependencies.auth import get_current_user, get_db, require_role
 from services.rbac_service import get_role_permissions_matrix, update_role_permissions_matrix
+from utils.clock import utcnow
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -33,7 +34,7 @@ def get_dashboard_stats(
     docs_count = db.query(AuditLog).filter(AuditLog.action.like("%export%")).count()
     
     # 5. AI Requests Today (AI messages generated today)
-    today_start = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     ai_requests_today = db.query(Message).filter(
         Message.role == "ai",
         Message.created_at >= today_start
@@ -44,7 +45,7 @@ def get_dashboard_stats(
     estimated_cost = token_usage * 0.00002
     
     # 7. Activity Chart Data (last 7 days of AI requests)
-    seven_days_ago = datetime.datetime.utcnow() - datetime.timedelta(days=7)
+    seven_days_ago = utcnow() - datetime.timedelta(days=7)
     activity_query = db.query(
         func.strftime("%Y-%m-%d", Message.created_at).label("day"),
         func.count(Message.id).label("count")
