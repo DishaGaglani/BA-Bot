@@ -16,10 +16,26 @@ from database import SessionLocal
 load_dotenv()
 
 # Configure logging
+class _DefaultTraceIdFilter(logging.Filter):
+    """The format string below requires a traceId on every record, but only our
+    own calls pass extra={"traceId": ...}. Records from anywhere else (third-party
+    libraries, or a call that forgot it) would otherwise raise KeyError inside the
+    handler and lose the log line. This fills in "-" only when the field is
+    missing, so records that do carry a traceId are left untouched. It's attached
+    to the handler, not set via a LogRecord factory: extra= is applied after the
+    factory runs and refuses to overwrite an existing attribute."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, "traceId"):
+            record.traceId = "-"
+        return True
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] traceId=%(traceId)s %(message)s"
 )
+for _handler in logging.getLogger().handlers:
+    if not any(isinstance(f, _DefaultTraceIdFilter) for f in _handler.filters):
+        _handler.addFilter(_DefaultTraceIdFilter())
 logger = logging.getLogger("ba-bot")
 
 # --- Retries with Exponential Backoff ---
