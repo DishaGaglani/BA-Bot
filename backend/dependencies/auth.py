@@ -148,7 +148,7 @@ def require_project_access(minimum_role: ProjectMemberRole):
             ProjectMemberRole.VIEWER: 1
         }
         
-        if role_hierarchy[user_role] < role_hierarchy[minimum_role]:
+        if role_hierarchy[user_role] < role_hierarchy[minimum_role]:  # type: ignore[index]
             # Log permission denied
             log_action(
                 db=db,
