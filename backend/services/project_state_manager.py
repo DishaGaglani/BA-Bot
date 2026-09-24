@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import requests
 from sqlalchemy.orm import Session
@@ -9,6 +10,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models import Project
 from services.gap_analyzer import analyze_gaps
 from utils.prod_ready import request_with_retry
+
+logger = logging.getLogger("ba-bot")
 
 PREDICTION_URL = os.getenv("PREDICTION_URL", "https://172.16.34.7:3000/api/v1/prediction/09ee3d2d-5d65-4793-a217-abd65e837366")
 
@@ -107,7 +110,7 @@ def extract_delta_updates(user_msg: str, ai_reply: str, current_state: dict, act
         if isinstance(delta, dict):
             return delta
     except Exception as e:
-        print(f"Failed to extract delta updates: {str(e)}")
+        logger.error(f"Failed to extract delta updates: {str(e)}", exc_info=True)
     return {}
 
 def update_project_state(db: Session, project: Project, user_msg: str, ai_reply: str, active_section: str = None) -> dict:
@@ -123,7 +126,7 @@ def update_project_state(db: Session, project: Project, user_msg: str, ai_reply:
             state["asked_questions"].append(q_clean)
 
     if delta:
-        print(f"Applying delta updates to project {project.id}: {list(delta.keys())}")
+        logger.info(f"Applying delta updates to project {project.id}: {list(delta.keys())}")
         state.update(delta)
         
         # Track completed sections in state
