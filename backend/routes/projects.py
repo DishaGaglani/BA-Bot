@@ -233,7 +233,7 @@ def update_project(
 
         # Map functional requirements
         state["functional_requirements"] = [
-            req.model_dump() if hasattr(req, "model_dump") else req
+            req.model_dump() if hasattr(req, "model_dump") else req  # type: ignore[misc]
             for req in payload.functional_requirements
         ]
     

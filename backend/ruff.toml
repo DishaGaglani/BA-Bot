@@ -1,0 +1,12 @@
+# CI lint gate: correctness errors only (syntax errors, undefined names, bad
+# format strings, ...). Style rules are deliberately not enabled so the gate
+# flags real bugs rather than churn.
+extend-exclude = ["uploads"]
+
+[lint]
+select = ["E9", "F"]
+ignore = [
+    "F401",  # unused imports: several are re-exports / import-for-side-effect
+    "F811",  # redefinition of unused name
+    "F841",  # unused local variable
+]

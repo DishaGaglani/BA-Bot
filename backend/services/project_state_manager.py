@@ -135,7 +135,7 @@ def update_project_state(db: Session, project: Project, user_msg: str, ai_reply:
         if state.get("project_name"):
             summary_lines.append(f"Project Name: {state.get('project_name')}")
         if state.get("functional_requirements"):
-            titles = [r.get("title") if isinstance(r, dict) else str(r) for r in state.get("functional_requirements")]
+            titles = [r.get("title") if isinstance(r, dict) else str(r) for r in state.get("functional_requirements")]  # type: ignore[union-attr]  # guarded by the truthiness check above
             summary_lines.append(f"Functional Reqs: {', '.join(titles)}")
         if state.get("non_functional_requirements"):
             summary_lines.append(f"Non-Functional: {', '.join(state.get('non_functional_requirements'))}")

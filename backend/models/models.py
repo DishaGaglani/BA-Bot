@@ -30,7 +30,7 @@ class User(Base):
     name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
-    role = Column(SqlEnum(UserRole), default=UserRole.BUSINESS_ANALYST, nullable=False)
+    role = Column(SqlEnum(UserRole), default=UserRole.BUSINESS_ANALYST, nullable=False)  # type: ignore[var-annotated]
     department = Column(String, default="IT", nullable=True)
     status = Column(String, default="ACTIVE", nullable=True)
     last_login = Column(DateTime, default=datetime.datetime.utcnow, nullable=True)
@@ -80,7 +80,7 @@ class ProjectMember(Base):
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    role = Column(SqlEnum(ProjectMemberRole), default=ProjectMemberRole.VIEWER, nullable=False)
+    role = Column(SqlEnum(ProjectMemberRole), default=ProjectMemberRole.VIEWER, nullable=False)  # type: ignore[var-annotated]
 
     # Relationships
     project = relationship("Project", back_populates="members")

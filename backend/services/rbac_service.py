@@ -100,7 +100,7 @@ def update_role_permissions_matrix(new_matrix: dict) -> bool:
     # TODO: Implement relational database storage transaction block here.
     """
     # Validate structure
-    validated_matrix = {}
+    validated_matrix: dict = {}
     for role, perms in new_matrix.items():
         validated_matrix[role] = {}
         for p in ALL_PERMISSIONS:
