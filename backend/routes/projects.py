@@ -1,5 +1,4 @@
 import json
-import requests
 import urllib3
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -317,12 +316,9 @@ def export_project(
                     document_text = ""
         except Exception as e:
             print(f"[EXPORT WARNING] Failed to connect to {PREDICTION_URL}: {str(e)}. Falling back to local generation...")
-            target_port = os.getenv("PORT", "8000")
-            mock_url = f"http://127.0.0.1:{target_port}/api/mock-predict"
             try:
-                res_mock = requests.post(mock_url, json=payload, timeout=10)
-                mock_data = res_mock.json()
-                document_text = mock_data.get("text")
+                from utils.mock_llm import build_mock_response_text
+                document_text = build_mock_response_text(prompt)
             except Exception:
                 document_text = None
 
