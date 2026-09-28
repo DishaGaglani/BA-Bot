@@ -2,6 +2,7 @@ import sqlite3
 import json
 import sys
 import os
+import uuid
 
 # Set up paths so we can import from database and models
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -181,7 +182,19 @@ def run_migration():
 
             conn.commit()
             conn.close()
-            
+
+        # Backfill session_id for any legacy projects that predate it always being set
+        # at creation time. Done once here (not on every GET /api/projects) so that
+        # route stays read-only per RFC 9110.
+        legacy_projects = db.query(Project).filter(
+            (Project.session_id == None) | (Project.session_id == "")
+        ).all()
+        if legacy_projects:
+            for legacy_project in legacy_projects:
+                legacy_project.session_id = f"session-{uuid.uuid4()}"
+            db.commit()
+            print(f"Backfilled session_id for {len(legacy_projects)} legacy project(s).")
+
         # Seed test users
         print("Ensuring default system users for all roles exist...")
         users_to_seed = [
