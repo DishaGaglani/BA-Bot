@@ -167,6 +167,26 @@ app.include_router(routes.admin.router)
 
 PREDICTION_URL = os.getenv("PREDICTION_URL", "https://172.16.34.7:3000/api/v1/prediction/09ee3d2d-5d65-4793-a217-abd65e837366")
 
+# Liveness/readiness probes for orchestrators (Docker healthcheck, Kubernetes).
+# /health below also pings the LLM API, which is too slow and too chatty for a probe that
+# runs every few seconds, and an LLM outage must not get the container restarted.
+@app.get("/health/live")
+def health_live():
+    """Liveness: the process is up and serving requests. Touches no dependency."""
+    return {"status": "alive"}
+
+
+@app.get("/health/ready")
+def health_ready(db: Session = Depends(get_db)):
+    """Readiness: the database answers, so this instance can take traffic."""
+    from sqlalchemy import text
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    return {"status": "ready"}
+
+
 # Health check route
 @app.get("/health")
 def health_check(db: Session = Depends(get_db)):
@@ -353,7 +373,9 @@ def predict(
     
     # 5. Deterministic gap analysis & section targeting
     state = get_structured_state(project)
-    gaps = analyze_gaps(state)
+    # Reuse this request's session: opening a second one while holding this one's connection
+    # starves the pool under load (every request holds one connection and waits for another).
+    gaps = analyze_gaps(state, db)
     active_section = gaps.get("current_section")
     
     # 6. Build optimized prompt
@@ -545,6 +567,10 @@ def predict(
             print(f"Post-chat update failed: {str(exc)}")
         finally:
             bg_db.close()
+
+    # Give the connection back before streaming. The dependency's session would otherwise stay
+    # checked out for the whole 30-90s LLM reply, and the stream uses its own session (bg_db).
+    db.close()
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

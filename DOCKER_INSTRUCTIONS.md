@@ -60,6 +60,30 @@ These volumes persist across container updates. If you ever need to inspect or b
 
 ---
 
+## Production Hardening
+
+- **Process management**: the backend runs under Gunicorn, managing several Uvicorn worker
+  processes (not a single one), so it uses more than one CPU core and a crashed worker is
+  restarted automatically without downtime. The worker count is picked automatically from
+  the container's own CPU/memory limits (`backend/gunicorn.conf.py`); override it with
+  `WEB_CONCURRENCY=<n>` under the `backend` service's `environment` in `docker-compose.yml`
+  if you need a specific count.
+- **Resource limits**: both containers have CPU, memory and process-count (`pids_limit`)
+  caps set in `docker-compose.yml`, so a runaway container can't take down the whole host.
+  Raise `backend`'s `cpus`/`mem_limit` (and `WEB_CONCURRENCY`) for a bigger server.
+- **Non-root, minimal capabilities**: both containers run as an unprivileged user with all
+  Linux capabilities dropped except the few each one actually needs. If you customize the
+  `cap_add` list, keep `KILL` — with `init: true` set (the default here), that capability is
+  what lets `docker compose stop` deliver a clean shutdown instead of a hard kill after the
+  stop timeout.
+- **Health checks**: `GET /health/live` and `GET /health/ready` on the backend are cheap
+  liveness/readiness probes with no external dependency (unlike `/health`, which also pings
+  the LLM API and is meant for humans checking status, not for a probe that runs every few
+  seconds). The backend image's `HEALTHCHECK` uses `/health/live`; `frontend` waits for it
+  to report healthy before starting.
+
+---
+
 ## Stopping or Restarting the App
 
 - **To stop the application**:
