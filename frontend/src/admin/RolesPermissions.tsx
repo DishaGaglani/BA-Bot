@@ -38,7 +38,7 @@ const RolesPermissions: React.FC<RolesPermissionsProps> = ({
     { title: "View Analytics", desc: "Inspect estimated cost, token utilization, and hours saved metrics" }
   ];
 
-  const rolesList = ['SUPER_ADMIN', 'ADMIN', 'BUSINESS_ANALYST', 'PROJECT_MANAGER', 'VIEWER', 'REVIEWER'];
+  const rolesList = ['ADMIN', 'USER'];
 
   // Toggle single permission for a role
   const handleCheckboxChange = (role: string, permission: string) => {
@@ -152,15 +152,15 @@ const RolesPermissions: React.FC<RolesPermissionsProps> = ({
                       </td>
                       {rolesList.map((role) => {
                         const isChecked = localMatrix[role]?.[perm.title] || false;
-                        const isSuperAdmin = role === 'SUPER_ADMIN';
-                        
+                        const isAdmin = role === 'ADMIN';
+
                         return (
                           <td key={`${role}-${perm.title}`} className="matrix-checkbox-cell">
-                            <input 
-                              type="checkbox" 
+                            <input
+                              type="checkbox"
                               className="matrix-checkbox"
                               checked={isChecked}
-                              disabled={isSuperAdmin} // Super admin permissions are locked
+                              disabled={isAdmin} // Admin permissions are locked: admin can always do everything
                               onChange={() => handleCheckboxChange(role, perm.title)}
                             />
                           </td>

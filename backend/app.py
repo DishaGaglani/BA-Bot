@@ -304,30 +304,24 @@ def predict(
     else:
         raise HTTPException(status_code=400, detail="Either projectId or sessionId is required")
 
-    # Verify project access permissions
-    is_admin = current_user.role in [UserRole.SUPER_ADMIN, UserRole.ADMIN]
+    # Verify chat access: admin, the owner, or a project MEMBER (not a project VIEWER,
+    # who can open and read the project but not talk to the bot on it).
+    is_admin = current_user.role == UserRole.ADMIN
     is_owner = project.owner_id == current_user.id
-    
+
     member = db.query(ProjectMember).filter(
         ProjectMember.project_id == project.id,
         ProjectMember.user_id == current_user.id
     ).first()
-    
-    has_team_access = False
-    if current_user.team_id:
-        from models import TeamProject
-        team_project_link = db.query(TeamProject).filter(
-            TeamProject.project_id == project.id,
-            TeamProject.team_id == current_user.team_id
-        ).first()
-        if team_project_link:
-            has_team_access = True
-            
-    if not (is_admin or is_owner or member or has_team_access):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this project"
+    is_chat_member = member is not None and member.role == ProjectMemberRole.MEMBER
+
+    if not (is_admin or is_owner or is_chat_member):
+        detail = (
+            "You do not have access to this project"
+            if not member
+            else "You have view-only access to this project and cannot chat with the bot"
         )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
     # Initialize/reuse Forjinn session id in the same db transaction
     if not project.forjinn_session_id:

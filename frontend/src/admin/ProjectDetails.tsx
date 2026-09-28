@@ -72,7 +72,7 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
 
   // Adding member form states
   const [selectedUserIds, setSelectedUserIds] = useState<number[]>([]);
-  const [assignedRole, setAssignedRole] = useState('CONTRIBUTOR');
+  const [assignedRole, setAssignedRole] = useState('MEMBER');
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
 
   const fetchDetails = async () => {
@@ -117,8 +117,6 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
 
   const getStatusLabel = (stat: string) => {
     switch (stat) {
-      case 'PENDING_REVIEW': return 'Pending Review';
-      case 'APPROVED': return 'Approved';
       case 'PUBLISHED': return 'Published';
       case 'DRAFT': return 'Draft';
       default: return stat;
@@ -127,9 +125,7 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
 
   const getStatusBadgeStyle = (stat: string) => {
     switch (stat) {
-      case 'APPROVED': return { background: '#d1fae5', color: '#065f46' };
       case 'PUBLISHED': return { background: '#e0e7ff', color: '#3730a3' };
-      case 'PENDING_REVIEW': return { background: '#fef3c7', color: '#92400e' };
       case 'DRAFT':
       default:
         return { background: '#f1f5f9', color: '#475569' };
@@ -301,7 +297,7 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
               >
                 {overview.locked ? '🔓 Unlock Workspace' : '🔒 Lock Workspace'}
               </button>
-              {overview.status === 'APPROVED' && (
+              {overview.status !== 'PUBLISHED' && (
                 <button
                   onClick={handlePublish}
                   className="admin-btn primary small"
@@ -393,7 +389,7 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
                 onClick={() => setIsAddMemberOpen(true)}
                 className="admin-btn primary small"
               >
-                👤 Add Team Member
+                👤 Add Member
               </button>
             </div>
 
@@ -425,10 +421,8 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
                         disabled={m.email === overview.owner_email}
                         style={{ padding: '6px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', cursor: m.email === overview.owner_email ? 'not-allowed' : 'pointer', fontSize: '0.85rem', backgroundColor: '#fff' }}
                       >
-                        <option value="PROJECT_MANAGER">Project Manager</option>
-                        <option value="BUSINESS_ANALYST">Business Analyst</option>
-                        <option value="CONTRIBUTOR">Contributor</option>
-                        <option value="VIEWER">Viewer</option>
+                        <option value="MEMBER">Member (chat &amp; edit)</option>
+                        <option value="VIEWER">Viewer (read-only)</option>
                       </select>
                     </td>
                     <td style={{ textAlign: 'right' }}>
@@ -618,10 +612,8 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
                         onChange={e => setAssignedRole(e.target.value)}
                         style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#fff' }}
                       >
-                        <option value="PROJECT_MANAGER">PROJECT_MANAGER</option>
-                        <option value="BUSINESS_ANALYST">BUSINESS_ANALYST</option>
-                        <option value="CONTRIBUTOR">CONTRIBUTOR</option>
-                        <option value="VIEWER">VIEWER</option>
+                        <option value="MEMBER">MEMBER (chat &amp; edit)</option>
+                        <option value="VIEWER">VIEWER (read-only)</option>
                       </select>
                     </label>
                   </>

@@ -10,7 +10,6 @@ import ConversationsPanel from './ConversationsPanel';
 import DocumentsPanel from './DocumentsPanel';
 import AnalyticsPanel from './AnalyticsPanel';
 import SettingsPanel from './SettingsPanel';
-import TeamManagement from './TeamManagement';
 import './Admin.css';
 
 interface AdminPortalProps {
@@ -32,8 +31,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
   const [usersList, setUsersList] = useState<User[]>([]);
-  const [projectsList, setProjectsList] = useState<any[]>([]);
-  
+
   // Sub-tab selectors for consolidated views
   const [dashboardSubTab, setDashboardSubTab] = useState<'metrics' | 'analytics'>('metrics');
   const [usersSubTab, setUsersSubTab] = useState<'directory' | 'permissions'>('directory');
@@ -56,7 +54,6 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [loadingPermissions, setLoadingPermissions] = useState(false);
   const [loadingStats, setLoadingStats] = useState(false);
-  const [loadingProjects, setLoadingProjects] = useState(false);
 
   // Fetch users
   const fetchUsers = async () => {
@@ -73,24 +70,6 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
       console.error('Failed to load users', err);
     } finally {
       setLoadingUsers(false);
-    }
-  };
-
-  // Fetch projects list
-  const fetchProjects = async () => {
-    setLoadingProjects(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/admin/projects`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setProjectsList(data);
-      }
-    } catch (err) {
-      console.error('Failed to load projects list', err);
-    } finally {
-      setLoadingProjects(false);
     }
   };
 
@@ -154,7 +133,6 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
     void fetchLogs();
     void fetchPermissions();
     void fetchDashboardStats();
-    void fetchProjects();
   }, [token]);
 
   // Reset selected project when active tab changes
@@ -389,24 +367,12 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
         </>
       )}
 
-      {activeTab === 'teams' && (
-        <TeamManagement
-          token={token}
-          users={usersList}
-          projects={projectsList}
-          onRefreshUsers={fetchUsers}
-        />
-      )}
-
       {activeTab === 'projects' && (
         selectedProjectId !== null ? (
           <ProjectDetails 
             token={token} 
             projectId={selectedProjectId} 
-            onBack={() => {
-              setSelectedProjectId(null);
-              void fetchProjects();
-            }} 
+            onBack={() => setSelectedProjectId(null)}
             users={usersList}
           />
         ) : (
@@ -467,7 +433,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
       )}
 
       {/* Placeholder Tabs */}
-      {!['dashboard', 'users', 'teams', 'projects', 'conversations', 'settings'].includes(activeTab) && (
+      {!['dashboard', 'users', 'projects', 'conversations', 'settings'].includes(activeTab) && (
         <div style={{ padding: '24px', backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0', minHeight: '300px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
           <div style={{ fontSize: '3rem', marginBottom: '16px' }}>🚧</div>
           <h2 style={{ fontSize: '1.25rem', fontWeight: '700', color: '#0f172a', margin: '0 0 8px 0' }}>Under Construction</h2>
