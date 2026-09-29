@@ -47,18 +47,15 @@ class TestEngineConfiguration:
     def test_sqlite_allows_use_across_request_threads(self):
         assert self._engine_kwargs("sqlite:///x.db")["connect_args"] == {"check_same_thread": False}
 
-    @pending_fix("issue 3", "SQLite-only connect_args are passed to every database, which crashes PostgreSQL/MySQL drivers")
     def test_sqlite_only_options_are_not_sent_to_other_databases(self):
         assert "check_same_thread" not in self._engine_kwargs("postgresql://u:p@db/app").get("connect_args", {})
 
-    @pending_fix("issue 3", "no connection-pool health checks are configured for server databases")
     def test_server_databases_get_connection_health_checks(self):
         assert self._engine_kwargs("postgresql://u:p@db/app").get("pool_pre_ping") is True
 
 
 # ------------------------------------------------------------------ issue 5: reads must not write
 class TestReadsAreSideEffectFree:
-    @pending_fix("issue 5", "GET /api/projects assigns a missing session_id and commits inside the read loop")
     def test_listing_projects_issues_no_writes(self, client, db, make_user, make_project, auth):
         owner = make_user()
         project = make_project(owner)

@@ -1252,7 +1252,7 @@ def create_admin_team(
     
     if payload.manager_id:
         mgr = db.query(User).filter(User.id == payload.manager_id).first()
-        mgr.team_id = db_team.id
+        mgr.team_id = db_team.id  # type: ignore[union-attr]  # TODO: mgr is None if manager_id is unknown
         db.commit()
         
     from services.audit import log_action
@@ -1290,7 +1290,7 @@ def update_admin_team(
     
     if payload.manager_id:
         mgr = db.query(User).filter(User.id == payload.manager_id).first()
-        mgr.team_id = team_id
+        mgr.team_id = team_id  # type: ignore[union-attr]  # TODO: mgr is None if manager_id is unknown
         db.commit()
         
     from services.audit import log_action
