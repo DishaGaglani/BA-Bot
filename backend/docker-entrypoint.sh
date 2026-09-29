@@ -6,6 +6,14 @@
 # to `app`. That matters when upgrading: volumes created by the old root-running image hold
 # root-owned files the unprivileged user could otherwise not write. When the platform already
 # starts the container as a non-root user (Kubernetes runAsUser, `user:` in Compose) it just execs.
+#
+# This is also what makes rootless Podman work without any extra handling: the chown/stat calls
+# above run inside the container's own user namespace, so they only ever see and touch the
+# namespace-local UID/GID Podman already remapped via /etc/subuid and /etc/subgid on the host — the
+# same code path as Docker, no subuid/subgid-aware logic needed here. Podman also has a `:U` volume
+# mount option that does this same chown from the host side, but don't reach for it here: it isn't
+# supported inside a compose file by podman-compose (only by `podman run` directly), and it would
+# be redundant with what this script already does on every start.
 set -e
 
 APP_UID=10001

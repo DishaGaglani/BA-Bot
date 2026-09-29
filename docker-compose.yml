@@ -10,6 +10,10 @@ version: '3.8'
 # instead of a hard kill after the stop timeout. CAP_KILL is part of that minimal set for
 # exactly that reason: tini runs as root and needs it to forward the signal to the app
 # process, which by then has dropped to an unprivileged user.
+#
+# Also runs unchanged under `podman-compose up --build` (see DOCKER_INSTRUCTIONS.md's Podman
+# section) — except in rootless mode, `frontend`'s "80:80" below needs one of the workarounds
+# documented there, since an unprivileged host user can't bind port 80 by default.
 
 services:
   backend:
