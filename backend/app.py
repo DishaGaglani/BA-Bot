@@ -51,26 +51,8 @@ setup_global_exception_handlers(app)
 # Rate limiting (brute-force / LLM-cost / spam protection on sensitive endpoints)
 app.state.limiter = limiter
 
-allowed_origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:5174",
-    "http://127.0.0.1:5174",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000"
-]
 frontend_url = os.getenv("FRONTEND_URL")
-if frontend_url:
-    allowed_origins.extend([origin.strip() for origin in frontend_url.split(",") if origin.strip()])
-
 is_prod = os.getenv("ENV") == "production"
-
-if is_prod:
-    if frontend_url:
-        allowed_origins = [origin.strip() for origin in frontend_url.split(",") if origin.strip()]
-    else:
-        allowed_origins = []
-        logger.warning("CORS: FRONTEND_URL environment variable is not set in production. CORS requests will be blocked.")
 
 cors_kwargs = {
     "allow_credentials": True,
@@ -79,8 +61,15 @@ cors_kwargs = {
 }
 
 if is_prod:
-    cors_kwargs["allow_origins"] = allowed_origins
+    if frontend_url:
+        cors_kwargs["allow_origins"] = [origin.strip() for origin in frontend_url.split(",") if origin.strip()]
+    else:
+        cors_kwargs["allow_origins"] = []
+        logger.warning("CORS: FRONTEND_URL environment variable is not set in production. CORS requests will be blocked.")
 else:
+    # Local dev origins aren't fixed in code either: this matches any localhost/127.0.0.1
+    # port, so it doesn't need updating whenever a dev server (Vite, CRA, etc.) picks a
+    # different port, and still doesn't hardcode a specific origin list.
     cors_kwargs["allow_origin_regex"] = r"http://(localhost|127\.0\.0\.1)(:\d+)?"
 
 app.add_middleware(
