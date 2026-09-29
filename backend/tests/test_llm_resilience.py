@@ -181,7 +181,6 @@ class TestProviderOutage:
         [requests.ConnectionError("refused"), requests.Timeout("timed out"), requests.HTTPError("503 Service Unavailable")],
         ids=["connection-refused", "timeout", "http-5xx"],
     )
-    @pending_fix("issue 4", "the outage fallback makes an HTTP call back to this same server, which cannot succeed under load")
     def test_falls_back_to_a_local_response_without_any_http_call(self, chat, db, failure):
         chat.llm.stream_script = [failure]
         r = chat.send()  # the no-real-network guard makes any attempted HTTP call fail this test
@@ -270,7 +269,6 @@ class TestExtractDeltaUpdates:
         prompt = llm.calls[-1]["prompt"]
         assert all(s in prompt for s in ("Hub", "USER-TEXT", "AI-TEXT", "Budget"))
 
-    @pending_fix("issue 7", "the extracted delta is returned as-is, so a bare string for a list field reaches the state unvalidated")
     def test_a_bare_string_for_a_list_field_is_coerced(self, llm):
         result = self._extract(llm, '{"functional_requirements": "SSO required"}')
         assert result == {"functional_requirements": [{"title": "SSO required", "priority": "Medium", "confidence": 1.0}]}

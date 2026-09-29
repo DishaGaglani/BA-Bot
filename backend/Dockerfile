@@ -30,4 +30,7 @@ RUN mkdir -p /app/uploads /app/data
 EXPOSE 8000
 
 # Start FastAPI application
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+# --proxy-headers/--forwarded-allow-ips: trust X-Forwarded-For so rate limiting sees
+# real client IPs rather than the Nginx container's. Safe here because only the
+# frontend (Nginx) container publishes a port; the backend isn't directly reachable.
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]

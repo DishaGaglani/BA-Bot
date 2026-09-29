@@ -47,18 +47,15 @@ class TestEngineConfiguration:
     def test_sqlite_allows_use_across_request_threads(self):
         assert self._engine_kwargs("sqlite:///x.db")["connect_args"] == {"check_same_thread": False}
 
-    @pending_fix("issue 3", "SQLite-only connect_args are passed to every database, which crashes PostgreSQL/MySQL drivers")
     def test_sqlite_only_options_are_not_sent_to_other_databases(self):
         assert "check_same_thread" not in self._engine_kwargs("postgresql://u:p@db/app").get("connect_args", {})
 
-    @pending_fix("issue 3", "no connection-pool health checks are configured for server databases")
     def test_server_databases_get_connection_health_checks(self):
         assert self._engine_kwargs("postgresql://u:p@db/app").get("pool_pre_ping") is True
 
 
 # ------------------------------------------------------------------ issue 5: reads must not write
 class TestReadsAreSideEffectFree:
-    @pending_fix("issue 5", "GET /api/projects assigns a missing session_id and commits inside the read loop")
     def test_listing_projects_issues_no_writes(self, client, db, make_user, make_project, auth):
         owner = make_user()
         project = make_project(owner)
@@ -80,15 +77,16 @@ class TestReadsAreSideEffectFree:
 
 # ------------------------------------------------------------------ issue 8: abuse protection
 class TestAbuseProtection:
-    @pending_fix("issue 8", "login has no rate limit, so passwords can be guessed without restriction")
     def test_repeated_failed_logins_are_throttled(self, client, make_user):
         user = make_user()
         codes = [client.post("/api/auth/login", json={"email": user.email, "password": "wrong"}).status_code for _ in range(12)]
         assert 429 in codes
 
-    @pending_fix("issue 8", "there is no request body size limit")
     def test_oversized_request_bodies_are_rejected(self, client):
-        big = {"name": "x" * (3 * 1024 * 1024), "email": "a@b.com", "password": "p"}
+        # MAX_REQUEST_BODY_BYTES defaults to 4MB (issue 8 review: 2x this app's largest
+        # legitimate payload, for header/framing headroom) — must exceed that, not the
+        # smaller ad-hoc size an earlier version of this limit used.
+        big = {"name": "x" * (5 * 1024 * 1024), "email": "a@b.com", "password": "p"}
         assert client.post("/api/auth/register", json=big).status_code == 413
 
     def test_a_normal_request_is_not_affected_by_limits(self, client, make_user, auth):
