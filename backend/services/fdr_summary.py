@@ -61,13 +61,10 @@ def _conversation_transcript(project: Project) -> str:
     return "\n".join(lines)
 
 
-def generate_fdr_json(project: Project, raise_on_error: bool = False) -> dict:
+def generate_fdr_json(project: Project) -> dict:
     """Ask the conversational model to summarize the full interview into the
     Requirement Discovery Form JSON schema. Any field not discussed is left blank
-    and rendered as [MISSING] by the docx builder.
-
-    With raise_on_error=True an LLM failure or empty reply raises instead of
-    returning the blank schema, so a caller that can retry (the job queue) may do so."""
+    and rendered as [MISSING] by the docx builder."""
     transcript = _conversation_transcript(project)
 
     prompt = (
@@ -99,8 +96,6 @@ def generate_fdr_json(project: Project, raise_on_error: bool = False) -> dict:
                 extracted_text = output_obj
 
         if not extracted_text:
-            if raise_on_error:
-                raise RuntimeError("LLM returned an empty FDR summary")
             return dict(FDR_SCHEMA)
 
         parsed = json.loads(clean_json_text(extracted_text))
@@ -111,7 +106,5 @@ def generate_fdr_json(project: Project, raise_on_error: bool = False) -> dict:
             merged[key] = _sanitize_list_field(merged.get(key), fields)
         return merged
     except Exception as e:
-        if raise_on_error:
-            raise
         print(f"[FDR SUMMARY WARNING] Failed to generate structured FDR JSON: {str(e)}")
         return dict(FDR_SCHEMA)
