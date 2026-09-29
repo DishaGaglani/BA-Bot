@@ -296,7 +296,7 @@ def export_project(
         }
 
         try:
-            from utils.prod_ready import request_with_retry
+            from utils.telemetry import request_with_retry
             response = request_with_retry("POST", PREDICTION_URL, json=payload, timeout=30, verify=False)
             res_data = response.json()
 

@@ -1,6 +1,5 @@
 import os
 import sys
-import uuid
 import time
 import json
 import logging
@@ -10,17 +9,45 @@ from fastapi import Request, Response, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.orm import Session
+from traceid import TraceId
 from database import SessionLocal
 
 # Load environment variables
 load_dotenv()
 
 # Configure logging
+class _DefaultTraceIdFilter(logging.Filter):
+    """The format string below requires a traceId on every record, but only our
+    own calls pass extra={"traceId": ...}. Records from anywhere else (third-party
+    libraries, or a call that forgot it) would otherwise raise KeyError inside the
+    handler and lose the log line. This fills in "-" only when the field is
+    missing, so records that do carry a traceId are left untouched. It's attached
+    to the handler, not set via a LogRecord factory: extra= is applied after the
+    factory runs and refuses to overwrite an existing attribute."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, "traceId"):
+            record.traceId = "-"
+        return True
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] traceId=%(traceId)s %(message)s"
 )
+for _handler in logging.getLogger().handlers:
+    if not any(isinstance(f, _DefaultTraceIdFilter) for f in _handler.filters):
+        _handler.addFilter(_DefaultTraceIdFilter())
 logger = logging.getLogger("ba-bot")
+
+def new_trace_id() -> str:
+    """Generate a fresh trace id via the traceid library instead of calling
+    uuid.uuid4() directly, so ID generation lives in one place backed by a
+    maintained library rather than an inline stdlib call. traceid stores the
+    value in a contextvar, which we don't otherwise rely on here (the trace id
+    is still threaded explicitly via request.state / extra={"traceId": ...}) so
+    each call clears any prior value first rather than reusing the ambient one."""
+    TraceId.clear()
+    TraceId.gen()
+    return str(TraceId.get())
 
 # --- Retries with Exponential Backoff ---
 def request_with_retry(method: str, url: str, **kwargs):
@@ -111,18 +138,18 @@ def make_error_response(message: str, error_code: str, trace_id: str, status_cod
 def setup_global_exception_handlers(app):
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
-        trace_id = getattr(request.state, "trace_id", str(uuid.uuid4()))
+        trace_id = getattr(request.state, "trace_id", None) or new_trace_id()
         logger.error(f"HTTPException: {exc.detail}", extra={"traceId": trace_id})
         return make_error_response(exc.detail, f"HTTP_{exc.status_code}", trace_id, exc.status_code)
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
-        trace_id = getattr(request.state, "trace_id", str(uuid.uuid4()))
+        trace_id = getattr(request.state, "trace_id", None) or new_trace_id()
         logger.error(f"Validation Error: {exc.errors()}", extra={"traceId": trace_id})
         return make_error_response("Invalid request payload parameters.", "VALIDATION_ERROR", trace_id, 422)
 
     @app.exception_handler(Exception)
     async def generic_exception_handler(request: Request, exc: Exception):
-        trace_id = getattr(request.state, "trace_id", str(uuid.uuid4()))
+        trace_id = getattr(request.state, "trace_id", None) or new_trace_id()
         logger.exception(f"Unhandled Exception: {str(exc)}", extra={"traceId": trace_id})
         return make_error_response("An unexpected internal server error occurred.", "INTERNAL_SERVER_ERROR", trace_id, 500)
