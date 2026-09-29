@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, Depends, status, Request, Response
+from fastapi import FastAPI, HTTPException, Depends, status, Request, Response, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -35,7 +35,7 @@ from dependencies.auth import get_current_user, get_db
 from models import User, UserRole, Project, ProjectMember, ProjectMemberRole
 from services.audit import log_action
 from services.conversation_manager import save_message, get_active_messages
-from services.summary_manager import check_and_summarize
+from services.summary_manager import run_summarization_job
 from services.gap_analyzer import analyze_gaps
 from services.project_state_manager import get_structured_state, update_project_state, get_legacy_payload
 from services.prompt_builder import build_optimized_prompt, estimate_tokens
@@ -228,6 +228,7 @@ class MessageRequest(BaseModel):
 @app.post("/api/predict")
 def predict(
     payload: MessageRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -289,8 +290,9 @@ def predict(
     is_first_message = len(project.messages) == 0
     save_message(db, project.id, "user", payload.question)
     
-    # 3. Trigger rolling summarization (every 10 active messages)
-    check_and_summarize(db, project)
+    # 3. Trigger rolling summarization (every 10 active messages) after this response is
+    # sent, so the LLM call summarization needs doesn't delay the reply to this message.
+    background_tasks.add_task(run_summarization_job, project.id)
     
     # 4. Fetch optimized conversation history window
     active_history = get_active_messages(db, project.id, limit=5)
