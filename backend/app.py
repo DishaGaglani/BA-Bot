@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from database import engine, SessionLocal
 from utils.migrate import run_migration
-from utils.reliability import validate_environment, setup_global_exception_handlers, logger, request_with_retry
+from utils.reliability import validate_environment, setup_global_exception_handlers, logger, request_with_retry, new_trace_id
 
 # Run database migrations and seed default data on startup
 run_migration()
@@ -90,7 +90,7 @@ async def standardize_responses_middleware(request: Request, call_next):
     if request.method == "OPTIONS":
         return await call_next(request)
 
-    trace_id = str(uuid.uuid4())
+    trace_id = new_trace_id()
     request.state.trace_id = trace_id
     
     # Simple user identification check if token is supplied
