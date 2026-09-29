@@ -6,8 +6,7 @@ import os
 
 # Adjust path to import Base from database
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from database import Base
-from utils.clock import utcnow
+from database import Base, utcnow
 
 class UserRole(str, enum.Enum):
     SUPER_ADMIN = "SUPER_ADMIN"

@@ -9,7 +9,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models import User, UserRole, AuditLog, Project, Message, ProjectMember, ProjectMemberRole, Team, TeamProject, DiscoverySection
 from dependencies.auth import get_current_user, get_db, require_role
 from services.rbac_service import get_role_permissions_matrix, update_role_permissions_matrix
-from utils.clock import utcnow
+from database import utcnow
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 

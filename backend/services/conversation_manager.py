@@ -4,7 +4,7 @@ import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models import Message
-from utils.clock import utcnow
+from database import utcnow
 
 def save_message(db: Session, project_id: int, role: str, text: str) -> Message:
     """Save a single conversation message in the database."""

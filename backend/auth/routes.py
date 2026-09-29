@@ -6,12 +6,11 @@ import os
 import json
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from database import SessionLocal
+from database import SessionLocal, utcnow
 from models import User, UserRole
 from auth.jwt import hash_password, verify_password, create_access_token
 from services.audit import log_action
 from dependencies.auth import get_current_user, get_db
-from utils.clock import utcnow
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
