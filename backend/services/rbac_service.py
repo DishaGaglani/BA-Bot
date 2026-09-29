@@ -1,5 +1,8 @@
 import os
+import logging
 import json
+
+logger = logging.getLogger("ba-bot")
 
 # Path to the permissions matrix JSON file
 PERMISSIONS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "role_permissions.json")
@@ -74,7 +77,7 @@ def get_role_permissions_matrix() -> dict:
                 json.dump(DEFAULT_MATRIX, f, indent=2)
             return DEFAULT_MATRIX
         except Exception as e:
-            print(f"Failed to create default role_permissions.json: {str(e)}")
+            logger.error(f"Failed to create default role_permissions.json: {str(e)}", exc_info=True)
             return DEFAULT_MATRIX
             
     try:
@@ -90,7 +93,7 @@ def get_role_permissions_matrix() -> dict:
                             matrix[role][p] = perms.get(p, False)
             return matrix
     except Exception as e:
-        print(f"Error loading role permissions matrix: {str(e)}")
+        logger.error(f"Error loading role permissions matrix: {str(e)}", exc_info=True)
         return DEFAULT_MATRIX
 
 def update_role_permissions_matrix(new_matrix: dict) -> bool:
@@ -111,7 +114,7 @@ def update_role_permissions_matrix(new_matrix: dict) -> bool:
             json.dump(validated_matrix, f, indent=2)
         return True
     except Exception as e:
-        print(f"Failed to write updated permissions to {PERMISSIONS_FILE}: {str(e)}")
+        logger.error(f"Failed to write updated permissions to {PERMISSIONS_FILE}: {str(e)}", exc_info=True)
         return False
 
 def check_permission(role: str, permission: str) -> bool:

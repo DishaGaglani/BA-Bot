@@ -48,7 +48,6 @@ class TestRegistration:
         assert db.query(User).filter_by(email="new@test.com").one().role == UserRole.BUSINESS_ANALYST
 
     @pytest.mark.parametrize("role", ["SUPER_ADMIN", "ADMIN", "REVIEWER", "PROJECT_MANAGER"])
-    @pending_fix("issue 1", "POST /api/auth/register honours a client-supplied role, so anyone can self-register as an admin")
     def test_cannot_self_assign_privileged_role(self, client, db, role):
         r = _register(client, email=f"{role.lower()}@test.com", role=role)
         # Either rejecting the request or ignoring the field is acceptable;
@@ -192,7 +191,6 @@ class TestJwtTokens:
     def test_garbage_rejected(self, garbage):
         assert decode_access_token(garbage) is None
 
-    @pending_fix("issue 2", "JWT secret falls back to a hardcoded, publicly-known string when JWT_SECRET is unset")
     def test_no_publicly_known_fallback_when_secret_unset(self):
         forged = pyjwt.encode(
             {"sub": "admin@example.com", "exp": int(time.time()) + 3600}, OLD_PUBLIC_DEFAULT_SECRET, algorithm=ALGORITHM

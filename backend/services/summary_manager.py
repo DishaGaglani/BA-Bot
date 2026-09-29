@@ -1,11 +1,14 @@
 import requests
 from sqlalchemy.orm import Session
+import logging
 import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models import Project, Message
 from services.conversation_manager import get_unarchived_messages
+
+logger = logging.getLogger("ba-bot")
 
 PREDICTION_URL = os.getenv("PREDICTION_URL", "https://172.16.34.7:3000/api/v1/prediction/09ee3d2d-5d65-4793-a217-abd65e837366")
 
@@ -24,7 +27,7 @@ def check_and_summarize(db: Session, project: Project) -> bool:
     # We keep the last 5 messages active/raw, and summarize the rest
     messages_to_summarize = unarchived[:-5]
     
-    print(f"Triggering rolling summarization for project {project.id} ({len(messages_to_summarize)} older messages)...")
+    logger.info(f"Triggering rolling summarization for project {project.id} ({len(messages_to_summarize)} older messages)...")
     
     # Format messages for the summarization prompt
     chat_lines = []
@@ -63,7 +66,7 @@ def check_and_summarize(db: Session, project: Project) -> bool:
                 summary_text = output_obj
                 
         if not summary_text:
-            print("Warning: Summarization service returned empty text.")
+            logger.warning("Summarization service returned empty text.")
             return False
             
         # Update project summary in DB
@@ -74,10 +77,10 @@ def check_and_summarize(db: Session, project: Project) -> bool:
             msg.is_archived = True
             
         db.commit()
-        print(f"Rolling summarization complete for project {project.id}. Archived {len(messages_to_summarize)} messages.")
+        logger.info(f"Rolling summarization complete for project {project.id}. Archived {len(messages_to_summarize)} messages.")
         return True
         
     except Exception as e:
-        print(f"Failed to perform auto-summarization: {str(e)}")
+        logger.error(f"Failed to perform auto-summarization: {str(e)}", exc_info=True)
         db.rollback()
         return False

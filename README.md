@@ -267,6 +267,31 @@ Users, permissions, audit logs, project administration (archive/restore/lock/clo
 
 ---
 
+## 🔭 Observability
+
+Everything below is opt-in and degrades to a no-op when unconfigured.
+
+| Concern | How | Turn it on |
+|---|---|---|
+| **Trace correlation** | The web app sends a W3C `traceparent` on every API call. The backend adopts that id for its logs, error bodies (`traceId`), Sentry events and spans, and echoes it as the `X-Trace-Id` response header. If you get an error, that one id finds everything. | Always on |
+| **Distributed tracing** | OpenTelemetry spans for incoming requests, SQLAlchemy queries and outgoing LLM calls (`requests`), plus a manual `llm.call` span per LLM request. `traceparent` is propagated to the LLM API. | `OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318` (or `OTEL_TRACES_EXPORTER=console` locally) |
+| **Error tracking** | Sentry captures unhandled exceptions (and crashed background threads). PII off, request bodies never sent, local variables off, and a `before_send` scrubber strips JWTs, `Bearer` tokens, passwords, the configured secrets and prompt/transcript fields. | `SENTRY_DSN=...` |
+| **Log hygiene** | All log lines carry the trace id and are scrubbed the same way, and messages are capped at 2,000 characters (long messages are usually echoed prompts). | `LOG_FORMAT=json` for one JSON object per line |
+| **Metrics** | Prometheus at `GET /metrics` (see below). Not proxied by the bundled Nginx, so it is only reachable inside the Docker network. | Always on; `METRICS_TOKEN=...` also requires `Authorization: Bearer` |
+
+Metrics (prefix `ba_`): `http_requests_total{method,route,status}`, `http_request_duration_seconds` (histogram), `http_requests_in_progress`, `llm_requests_total{operation,outcome}`, `llm_request_duration_seconds`, `llm_retries_total`, `llm_tokens_total{operation,direction}` (**estimated**, chars/4), `chat_streams_active`, `active_users` (distinct authenticated users in the last 5 minutes), `db_query_duration_seconds{operation}`, `db_pool_connections_in_use`, `unhandled_exceptions_total{source}`, `tasks_total` / `task_duration_seconds`. Routes are labelled by template (`/api/projects/{project_id}`), never by raw path. Example queries:
+
+```promql
+histogram_quantile(0.95, sum by (le, route) (rate(ba_http_request_duration_seconds_bucket[5m])))   # p95 latency per route
+sum(rate(ba_http_requests_total{status=~"5.."}[5m])) / sum(rate(ba_http_requests_total[5m]))       # 5xx ratio
+sum by (operation) (rate(ba_llm_requests_total{outcome="error"}[5m]))                               # LLM failures
+sum by (direction) (increase(ba_llm_tokens_total[1d]))                                              # est. daily tokens
+```
+
+Scrape config: `scrape_configs: [{job_name: ba-bot, metrics_path: /metrics, static_configs: [{targets: ["backend:8000"]}]}]`. Metrics are per process, so running several uvicorn workers needs Prometheus multiprocess mode. To time your own background work, wrap it in `utils.observability.observe_task("name")` (span + metrics + Sentry on failure).
+
+---
+
 ## 🗃️ Data Model (structured state)
 
 Each project's live requirements data is stored as a structured JSON object in `Project.structured_state`, evolved turn-by-turn by the AI as the interview progresses:

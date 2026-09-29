@@ -1,4 +1,5 @@
 import json
+import logging
 import urllib3
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -19,6 +20,8 @@ from dependencies.auth import (
 )
 from utils.export import parse_markdown_to_pdf
 from services.project_state_manager import get_legacy_payload, get_structured_state, DEFAULT_STATE
+
+logger = logging.getLogger("ba-bot")
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -310,7 +313,7 @@ def export_project(
                 else:
                     document_text = ""
         except Exception as e:
-            print(f"[EXPORT WARNING] Failed to connect to {PREDICTION_URL}: {str(e)}. Falling back to local generation...")
+            logger.warning(f"Failed to connect to {PREDICTION_URL}: {str(e)}. Falling back to local generation...")
             try:
                 from utils.mock_llm import build_mock_response_text
                 document_text = build_mock_response_text(prompt)
