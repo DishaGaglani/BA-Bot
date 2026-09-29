@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from database import engine, SessionLocal
 from utils.migrate import run_migration
-from utils.reliability import validate_environment, setup_global_exception_handlers, logger, request_with_retry, new_trace_id
+from utils.telemetry import validate_environment, setup_global_exception_handlers, logger, request_with_retry, new_trace_id
 from utils.mock_llm import build_mock_response_text, generate_mock_stream_lines
 
 # Run database migrations and seed default data on startup
