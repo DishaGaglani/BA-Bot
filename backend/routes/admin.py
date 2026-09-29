@@ -7,7 +7,7 @@ import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from models import User, UserRole, AuditLog, Project, Message, ProjectMember, ProjectMemberRole, Team, TeamProject, DiscoverySection
+from models import User, UserRole, AuditLog, Project, Message, ProjectMember, ProjectMemberRole, DiscoverySection
 from dependencies.auth import get_current_user, get_db, require_role
 from services.rbac_service import get_role_permissions_matrix, update_role_permissions_matrix
 
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 @router.get("/dashboard-stats")
 def get_dashboard_stats(
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     import datetime
@@ -130,7 +130,7 @@ class UserStatusUpdateRequest(BaseModel):
 
 @router.get("/users")
 def get_users(
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     users = db.query(User).all()
@@ -150,7 +150,7 @@ def get_users(
 def update_user_role(
     user_id: int,
     payload: UserRoleUpdate,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     user = db.query(User).filter(User.id == user_id).first()
@@ -186,7 +186,7 @@ def update_user_role(
 @router.post("/users", status_code=status.HTTP_201_CREATED)
 def create_user_by_admin(
     payload: UserCreateRequest,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     # Check if user already exists
@@ -237,7 +237,7 @@ def create_user_by_admin(
 def update_user_details(
     user_id: int,
     payload: UserUpdateRequest,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     user = db.query(User).filter(User.id == user_id).first()
@@ -294,7 +294,7 @@ def update_user_details(
 def update_user_status(
     user_id: int,
     payload: UserStatusUpdateRequest,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     user = db.query(User).filter(User.id == user_id).first()
@@ -325,7 +325,7 @@ def update_user_status(
 @router.delete("/users/{user_id}")
 def delete_user(
     user_id: int,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     user = db.query(User).filter(User.id == user_id).first()
@@ -353,14 +353,14 @@ def delete_user(
 
 @router.get("/permissions")
 def get_permissions(
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN]))
+    current_user: User = Depends(require_role([UserRole.ADMIN]))
 ):
     return get_role_permissions_matrix()
 
 @router.put("/permissions")
 def save_permissions(
     payload: dict,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN]))
+    current_user: User = Depends(require_role([UserRole.ADMIN]))
 ):
     success = update_role_permissions_matrix(payload)
     if not success:
@@ -369,7 +369,7 @@ def save_permissions(
 
 @router.get("/audit-logs")
 def get_audit_logs(
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     # Query logs ordered by timestamp descending
@@ -426,7 +426,7 @@ class ProjectOwnershipTransfer(BaseModel):
 
 @router.get("/projects")
 def list_admin_projects(
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     projects = db.query(Project).all()
@@ -458,7 +458,7 @@ def list_admin_projects(
 @router.post("/projects")
 def create_admin_project(
     payload: ProjectAdminCreate,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     import datetime
@@ -511,11 +511,11 @@ def create_admin_project(
     db.commit()
     db.refresh(db_project)
     
-    # Auto assign creator as PROJECT_MANAGER
+    # Auto assign creator as a full MEMBER
     member = ProjectMember(
         project_id=db_project.id,
         user_id=current_user.id,
-        role=ProjectMemberRole.PROJECT_MANAGER
+        role=ProjectMemberRole.MEMBER
     )
     db.add(member)
     db.commit()
@@ -534,7 +534,7 @@ def create_admin_project(
 def update_admin_project(
     project_id: int,
     payload: ProjectAdminUpdate,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     import datetime
@@ -599,7 +599,7 @@ def update_admin_project(
 @router.delete("/projects/{project_id}")
 def delete_admin_project(
     project_id: int,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     project = db.query(Project).filter(Project.id == project_id).first()
@@ -621,7 +621,7 @@ def delete_admin_project(
 @router.put("/projects/{project_id}/archive")
 def archive_admin_project(
     project_id: int,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     project = db.query(Project).filter(Project.id == project_id).first()
@@ -644,7 +644,7 @@ def archive_admin_project(
 @router.put("/projects/{project_id}/restore")
 def restore_admin_project(
     project_id: int,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     project = db.query(Project).filter(Project.id == project_id).first()
@@ -668,7 +668,7 @@ def restore_admin_project(
 def transfer_admin_project_ownership(
     project_id: int,
     payload: ProjectOwnershipTransfer,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     project = db.query(Project).filter(Project.id == project_id).first()
@@ -682,18 +682,18 @@ def transfer_admin_project_ownership(
     old_owner_id = project.owner_id
     project.owner_id = payload.owner_id
     
-    # Ensure new owner is in project members as PROJECT_MANAGER
+    # Ensure new owner is a full MEMBER of the project
     member = db.query(ProjectMember).filter(
         ProjectMember.project_id == project_id,
         ProjectMember.user_id == payload.owner_id
     ).first()
     if member:
-        member.role = ProjectMemberRole.PROJECT_MANAGER
+        member.role = ProjectMemberRole.MEMBER
     else:
         new_member = ProjectMember(
             project_id=project_id,
             user_id=payload.owner_id,
-            role=ProjectMemberRole.PROJECT_MANAGER
+            role=ProjectMemberRole.MEMBER
         )
         db.add(new_member)
 
@@ -729,7 +729,7 @@ def transfer_admin_project_ownership(
 def assign_admin_project_members(
     project_id: int,
     payload: ProjectMembersAssign,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     project = db.query(Project).filter(Project.id == project_id).first()
@@ -783,7 +783,7 @@ def update_admin_project_member_role(
     project_id: int,
     user_id: int,
     payload: ProjectMemberRoleUpdate,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     member = db.query(ProjectMember).filter(
@@ -811,7 +811,7 @@ def update_admin_project_member_role(
 def remove_admin_project_member(
     project_id: int,
     user_id: int,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     member = db.query(ProjectMember).filter(
@@ -837,7 +837,7 @@ def remove_admin_project_member(
 @router.get("/projects/{project_id}/details")
 def get_admin_project_details(
     project_id: int,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     project = db.query(Project).filter(Project.id == project_id).first()
@@ -933,7 +933,7 @@ class SystemSettingsUpdate(BaseModel):
 
 @router.get("/conversations")
 def list_admin_conversations(
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     from sqlalchemy import func
@@ -958,7 +958,7 @@ def list_admin_conversations(
 @router.delete("/conversations/{project_id}")
 def delete_admin_conversation(
     project_id: int,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     from models import Message
@@ -978,7 +978,7 @@ def delete_admin_conversation(
 
 @router.get("/documents")
 def list_admin_documents(
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     # Query export and document generation logs
@@ -1010,7 +1010,7 @@ def list_admin_documents(
 
 @router.get("/analytics")
 def get_admin_analytics(
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     from sqlalchemy import func
@@ -1080,14 +1080,14 @@ def read_settings() -> dict:
 
 @router.get("/settings")
 def get_admin_settings(
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN]))
+    current_user: User = Depends(require_role([UserRole.ADMIN]))
 ):
     return read_settings()
 
 @router.put("/settings")
 def save_admin_settings(
     payload: SystemSettingsUpdate,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN]))
+    current_user: User = Depends(require_role([UserRole.ADMIN]))
 ):
     try:
         with open(SETTINGS_FILE, "w") as f:
@@ -1099,7 +1099,7 @@ def save_admin_settings(
 @router.put("/projects/{project_id}/lock")
 def lock_admin_project(
     project_id: int,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     project = db.query(Project).filter(Project.id == project_id).first()
@@ -1122,7 +1122,7 @@ def lock_admin_project(
 @router.put("/projects/{project_id}/unlock")
 def unlock_admin_project(
     project_id: int,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     project = db.query(Project).filter(Project.id == project_id).first()
@@ -1145,7 +1145,7 @@ def unlock_admin_project(
 @router.post("/projects/{project_id}/clone")
 def clone_admin_project(
     project_id: int,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     import uuid
@@ -1194,7 +1194,7 @@ def clone_admin_project(
         creator_m = ProjectMember(
             project_id=cloned_project.id,
             user_id=current_user.id,
-            role=ProjectMemberRole.PROJECT_MANAGER
+            role=ProjectMemberRole.MEMBER
         )
         db.add(creator_m)
         
@@ -1213,271 +1213,6 @@ def clone_admin_project(
     )
     return {"status": "ok", "message": "Project cloned successfully.", "project_id": cloned_project.id}
 
-class TeamCreate(BaseModel):
-    name: str
-    manager_id: int | None = None
-
-class TeamUpdate(BaseModel):
-    name: str
-    manager_id: int | None = None
-
-class TeamMembersAssign(BaseModel):
-    user_ids: list[int]
-
-class TeamProjectsAssign(BaseModel):
-    project_ids: list[int]
-
-@router.get("/teams")
-def list_admin_teams(
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
-    db: Session = Depends(get_db)
-):
-    teams = db.query(Team).all()
-    result = []
-    for t in teams:
-        members_count = db.query(User).filter(User.team_id == t.id).count()
-        projects_count = db.query(TeamProject).filter(TeamProject.team_id == t.id).count()
-        manager_name = "None"
-        if t.manager:
-            manager_name = t.manager.name
-        result.append({
-            "id": t.id,
-            "name": t.name,
-            "manager_id": t.manager_id,
-            "manager_name": manager_name,
-            "members_count": members_count,
-            "projects_count": projects_count,
-            "created_at": t.created_at.isoformat()
-        })
-    return result
-
-@router.post("/teams")
-def create_admin_team(
-    payload: TeamCreate,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
-    db: Session = Depends(get_db)
-):
-    if payload.manager_id:
-        mgr = db.query(User).filter(User.id == payload.manager_id).first()
-        if not mgr:
-            raise HTTPException(status_code=404, detail="Manager user not found")
-            
-    existing = db.query(Team).filter(Team.name == payload.name).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Team name already exists")
-        
-    db_team = Team(
-        name=payload.name,
-        manager_id=payload.manager_id
-    )
-    db.add(db_team)
-    db.commit()
-    db.refresh(db_team)
-    
-    if payload.manager_id:
-        mgr = db.query(User).filter(User.id == payload.manager_id).first()
-        mgr.team_id = db_team.id
-        db.commit()
-        
-    from services.audit import log_action
-    log_action(
-        db=db,
-        user_id=current_user.id,
-        action="team created",
-        metadata={"team_id": db_team.id, "team_name": db_team.name}
-    )
-    return {"status": "ok", "message": "Team created successfully.", "team_id": db_team.id}
-
-@router.put("/teams/{team_id}")
-def update_admin_team(
-    team_id: int,
-    payload: TeamUpdate,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
-    db: Session = Depends(get_db)
-):
-    team = db.query(Team).filter(Team.id == team_id).first()
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
-        
-    if payload.manager_id:
-        mgr = db.query(User).filter(User.id == payload.manager_id).first()
-        if not mgr:
-            raise HTTPException(status_code=404, detail="Manager user not found")
-            
-    existing = db.query(Team).filter(Team.name == payload.name, Team.id != team_id).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Team name already exists")
-        
-    team.name = payload.name
-    team.manager_id = payload.manager_id
-    db.commit()
-    
-    if payload.manager_id:
-        mgr = db.query(User).filter(User.id == payload.manager_id).first()
-        mgr.team_id = team_id
-        db.commit()
-        
-    from services.audit import log_action
-    log_action(
-        db=db,
-        user_id=current_user.id,
-        action="team updated",
-        metadata={"team_id": team.id, "team_name": team.name}
-    )
-    return {"status": "ok", "message": "Team updated successfully."}
-
-@router.delete("/teams/{team_id}")
-def delete_admin_team(
-    team_id: int,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
-    db: Session = Depends(get_db)
-):
-    team = db.query(Team).filter(Team.id == team_id).first()
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
-        
-    db.query(User).filter(User.team_id == team_id).update({User.team_id: None})
-    db.query(TeamProject).filter(TeamProject.team_id == team_id).delete()
-    
-    db.delete(team)
-    db.commit()
-    
-    from services.audit import log_action
-    log_action(
-        db=db,
-        user_id=current_user.id,
-        action="team deleted",
-        metadata={"deleted_team_id": team_id}
-    )
-    return {"status": "ok", "message": "Team deleted successfully."}
-
-@router.post("/teams/{team_id}/members")
-def assign_admin_team_members(
-    team_id: int,
-    payload: TeamMembersAssign,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
-    db: Session = Depends(get_db)
-):
-    team = db.query(Team).filter(Team.id == team_id).first()
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
-        
-    db.query(User).filter(User.team_id == team_id).update({User.team_id: None})
-    
-    for uid in payload.user_ids:
-        usr = db.query(User).filter(User.id == uid).first()
-        if usr:
-            usr.team_id = team_id
-            
-    if team.manager_id:
-        mgr = db.query(User).filter(User.id == team.manager_id).first()
-        if mgr:
-            mgr.team_id = team_id
-            
-    db.commit()
-    
-    from services.audit import log_action
-    log_action(
-        db=db,
-        user_id=current_user.id,
-        action="team members assigned",
-        metadata={"team_id": team_id, "user_ids": payload.user_ids}
-    )
-    return {"status": "ok", "message": "Team members updated successfully."}
-
-@router.post("/teams/{team_id}/projects")
-def assign_admin_team_projects(
-    team_id: int,
-    payload: TeamProjectsAssign,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
-    db: Session = Depends(get_db)
-):
-    team = db.query(Team).filter(Team.id == team_id).first()
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
-        
-    db.query(TeamProject).filter(TeamProject.team_id == team_id).delete()
-    
-    for pid in payload.project_ids:
-        proj = db.query(Project).filter(Project.id == pid).first()
-        if proj:
-            link = TeamProject(team_id=team_id, project_id=pid)
-            db.add(link)
-            
-    db.commit()
-    
-    from services.audit import log_action
-    log_action(
-        db=db,
-        user_id=current_user.id,
-        action="team projects assigned",
-        metadata={"team_id": team_id, "project_ids": payload.project_ids}
-    )
-    return {"status": "ok", "message": "Team projects updated successfully."}
-
-@router.get("/teams/{team_id}/analytics")
-def get_admin_team_analytics(
-    team_id: int,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
-    db: Session = Depends(get_db)
-):
-    team = db.query(Team).filter(Team.id == team_id).first()
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
-        
-    team_members = db.query(User).filter(User.team_id == team_id).all()
-    members_list = [{
-        "id": m.id,
-        "name": m.name,
-        "email": m.email,
-        "role": m.role.value
-    } for m in team_members]
-    
-    team_projects = db.query(TeamProject).filter(TeamProject.team_id == team_id).all()
-    projects_list = []
-    project_ids = []
-    for tp in team_projects:
-        if tp.project:
-            projects_list.append({
-                "id": tp.project.id,
-                "name": tp.project.name,
-                "status": tp.project.status,
-                "department": tp.project.department or "—",
-                "priority": tp.project.priority or "MEDIUM"
-            })
-            project_ids.append(tp.project.id)
-            
-    member_ids = [m.id for m in team_members]
-    messages_count = 0
-    if member_ids and project_ids:
-        messages_count = db.query(Message).filter(Message.project_id.in_(project_ids)).count()
-        
-    activity_count = 0
-    recent_activities = []
-    if member_ids:
-        activity_count = db.query(AuditLog).filter(AuditLog.user_id.in_(member_ids)).count()
-        logs = db.query(AuditLog).filter(
-            AuditLog.user_id.in_(member_ids)
-        ).order_by(AuditLog.timestamp.desc()).limit(20).all()
-        
-        for l in logs:
-            recent_activities.append({
-                "id": l.id,
-                "action": l.action,
-                "user_email": l.user.email if l.user else "System",
-                "timestamp": l.timestamp.isoformat()
-            })
-            
-    return {
-        "teamName": team.name,
-        "managerName": team.manager.name if team.manager else "None",
-        "members": members_list,
-        "projects": projects_list,
-        "messagesCount": messages_count,
-        "activityCount": activity_count,
-        "recentActivity": recent_activities
-    }
-
 class DiscoverySectionUpdate(BaseModel):
     prompt: str
     enabled: bool
@@ -1488,7 +1223,7 @@ class DiscoverySectionUpdate(BaseModel):
 
 @router.get("/discovery-sections")
 def list_admin_discovery_sections(
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     sections = db.query(DiscoverySection).order_by(DiscoverySection.question_order.asc()).all()
@@ -1511,7 +1246,7 @@ def list_admin_discovery_sections(
 def update_admin_discovery_section(
     section_id: int,
     payload: DiscoverySectionUpdate,
-    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db)
 ):
     section = db.query(DiscoverySection).filter(DiscoverySection.id == section_id).first()

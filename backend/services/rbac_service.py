@@ -17,9 +17,8 @@ ALL_PERMISSIONS = [
 ]
 
 DEFAULT_MATRIX = {
-    "SUPER_ADMIN": {p: True for p in ALL_PERMISSIONS},
     "ADMIN": {p: True for p in ALL_PERMISSIONS},
-    "BUSINESS_ANALYST": {
+    "USER": {
         "Create Project": True,
         "Delete Project": False,
         "Edit Project": True,
@@ -27,37 +26,7 @@ DEFAULT_MATRIX = {
         "Manage Users": False,
         "Manage Prompts": False,
         "Manage AI": False,
-        "View Analytics": True
-    },
-    "PROJECT_MANAGER": {
-        "Create Project": True,
-        "Delete Project": True,
-        "Edit Project": True,
-        "Generate Document": True,
-        "Manage Users": False,
-        "Manage Prompts": False,
-        "Manage AI": False,
-        "View Analytics": True
-    },
-    "VIEWER": {
-        "Create Project": False,
-        "Delete Project": False,
-        "Edit Project": False,
-        "Generate Document": False,
-        "Manage Users": False,
-        "Manage Prompts": False,
-        "Manage AI": False,
-        "View Analytics": True
-    },
-    "REVIEWER": {
-        "Create Project": False,
-        "Delete Project": False,
-        "Edit Project": True,
-        "Generate Document": True,
-        "Manage Users": False,
-        "Manage Prompts": False,
-        "Manage AI": False,
-        "View Analytics": True
+        "View Analytics": False
     }
 }
 

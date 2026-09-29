@@ -322,10 +322,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
 
   const getStatusBadgeClass = (stat: string) => {
     switch (stat) {
-      case 'APPROVED': return 'badge success';
       case 'PUBLISHED': return 'badge success';
-      case 'PENDING_REVIEW': return 'badge warning';
-      case 'IN_REVIEW': return 'badge warning';
       case 'ARCHIVED': return 'badge secondary';
       case 'DRAFT':
       default:
@@ -335,11 +332,9 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
 
   const getStatusLabel = (stat: string) => {
     switch (stat) {
-      case 'PENDING_REVIEW': return 'Pending Review';
-      case 'APPROVED': return 'Approved';
       case 'PUBLISHED': return 'Published';
       case 'DRAFT': return 'Draft';
-      case 'IN_REVIEW': return 'In Review';
+      case 'ARCHIVED': return 'Archived';
       default: return stat;
     }
   };
@@ -618,9 +613,6 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
                     Project Status
                     <select value={status} onChange={e => setStatus(e.target.value)}>
                       <option value="DRAFT">DRAFT</option>
-                      <option value="IN_REVIEW">IN_REVIEW</option>
-                      <option value="APPROVED">APPROVED</option>
-                      <option value="REJECTED">REJECTED</option>
                     </select>
                   </label>
                 </div>
@@ -727,9 +719,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
                     Project Status
                     <select value={status} onChange={e => setStatus(e.target.value)}>
                       <option value="DRAFT">DRAFT</option>
-                      <option value="IN_REVIEW">IN_REVIEW</option>
-                      <option value="APPROVED">APPROVED</option>
-                      <option value="REJECTED">REJECTED</option>
+                      <option value="PUBLISHED">PUBLISHED</option>
                       <option value="ARCHIVED">ARCHIVED</option>
                     </select>
                   </label>
@@ -783,7 +773,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
               <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 <p style={{ fontSize: '0.9rem', color: '#475569' }}>
                   Select the new project owner from the list of system users. 
-                  The new owner will automatically be assigned the **PROJECT_MANAGER** project role.
+                  The new owner will automatically be assigned as a full **MEMBER** of the project.
                 </p>
                 <label>
                   New Project Owner *

@@ -56,7 +56,6 @@ _LEGACY_COLUMNS = {
         "department": "VARCHAR DEFAULT 'IT'",
         "status": "VARCHAR DEFAULT 'ACTIVE'",
         "last_login": "DATETIME",
-        "team_id": "INTEGER REFERENCES teams(id)",
     },
     "projects": {
         "summary": "TEXT",
@@ -104,10 +103,34 @@ def _adopt_pre_alembic_database() -> None:
                 if name not in existing:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl_type}"))
 
+        if "users" in tables:
+            # Role model simplified to ADMIN/USER (accounts) and MEMBER/VIEWER (per-project).
+            # Column values are plain strings on SQLite (no DB-level CHECK constraint tied to
+            # the enum), so this is a data fix, not a schema change: any row still holding one
+            # of the old values would otherwise fail to load under the new, smaller enum. Maps
+            # straight from every historical value to its final one — never through a now-also-
+            # deleted intermediate name like PROJECT_MANAGER/CONTRIBUTOR.
+            conn.execute(text("UPDATE users SET role = 'ADMIN' WHERE role = 'SUPER_ADMIN'"))
+            conn.execute(text(
+                "UPDATE users SET role = 'USER' "
+                "WHERE role IN ('BUSINESS_ANALYST', 'PROJECT_MANAGER', 'VIEWER', 'REVIEWER')"
+            ))
+
+        if "projects" in tables:
+            # No more review/approval stage: anything not yet published goes back to DRAFT,
+            # where it can be edited and published directly.
+            conn.execute(text(
+                "UPDATE projects SET status = 'DRAFT' WHERE status IN ('PENDING_REVIEW', 'APPROVED')"
+            ))
+
         if "project_members" in tables:
-            # Old role names, from before PROJECT_MANAGER/CONTRIBUTOR existed.
-            conn.execute(text("UPDATE project_members SET role = 'PROJECT_MANAGER' WHERE role = 'OWNER'"))
-            conn.execute(text("UPDATE project_members SET role = 'CONTRIBUTOR' WHERE role = 'EDITOR'"))
+            # Every historical role that predates MEMBER/VIEWER — the original OWNER/EDITOR
+            # names, and PROJECT_MANAGER/BUSINESS_ANALYST/CONTRIBUTOR from the role model in
+            # between — collapses to MEMBER; VIEWER is unaffected.
+            conn.execute(text(
+                "UPDATE project_members SET role = 'MEMBER' "
+                "WHERE role IN ('OWNER', 'EDITOR', 'PROJECT_MANAGER', 'BUSINESS_ANALYST', 'CONTRIBUTOR')"
+            ))
 
             # De-duplicate before the baseline revision's unique constraint can be applied:
             # repeated /invite calls for the same (project_id, user_id) pair could have
@@ -116,6 +139,13 @@ def _adopt_pre_alembic_database() -> None:
                 DELETE FROM project_members
                 WHERE id NOT IN (SELECT MIN(id) FROM project_members GROUP BY project_id, user_id)
             """))
+
+        # The Team feature (and the per-project role it inherited) has been removed; the
+        # model no longer declares these tables at all, so drop them here rather than in a
+        # migration revision, and never re-add users.team_id to _LEGACY_COLUMNS above.
+        for legacy_table in ("team_projects", "teams"):
+            if legacy_table in tables:
+                conn.execute(text(f"DROP TABLE {legacy_table}"))
 
     # create_all() only creates whole missing tables; it never retrofits an index or
     # constraint onto one that already existed before the model declared it (exactly
@@ -243,12 +273,8 @@ def ensure_seed_data() -> None:
 
         print("Ensuring default system users for all roles exist...")
         for name, email, password, role in [
-            ("Super Admin", "superadmin@example.com", "admin123", UserRole.SUPER_ADMIN),
             ("Admin User", "admin@example.com", "admin123", UserRole.ADMIN),
-            ("Business Analyst", "ba@example.com", "ba123", UserRole.BUSINESS_ANALYST),
-            ("Project Manager", "pm@example.com", "pm123", UserRole.PROJECT_MANAGER),
-            ("Viewer User", "viewer@example.com", "viewer123", UserRole.VIEWER),
-            ("Reviewer User", "reviewer@example.com", "reviewer123", UserRole.REVIEWER),
+            ("Demo User", "user@example.com", "user123", UserRole.USER),
         ]:
             _get_or_create_user(db, name, email, password, role)
         print("Default system users check complete.")
