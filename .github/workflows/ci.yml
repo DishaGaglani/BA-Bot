@@ -125,3 +125,39 @@ jobs:
           push: false
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  podman-build:
+    name: Podman build (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    # Podman is our primary production container runtime (rootless, daemonless), separate
+    # from the docker-build job above: this proves the same Dockerfiles build under Podman
+    # too, without ever needing a Docker daemon or elevated privileges.
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure Podman is available
+        run: |
+          if ! command -v podman >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y podman
+          fi
+          podman --version
+      - name: Build image with Podman
+        run: podman build -t ba-bot-${{ matrix.service }}:ci ./${{ matrix.service }}
+
+  podman-compose-check:
+    name: Podman Compose compatibility
+    runs-on: ubuntu-latest
+    # Validates docker-compose.yml resolves cleanly under podman-compose (service definitions,
+    # volumes, env, dependency graph) without actually starting the stack, so this doesn't need
+    # the real PREDICTION_URL/secrets a live run would.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install podman-compose
+      - run: podman-compose -f docker-compose.yml config
