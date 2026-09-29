@@ -1,6 +1,5 @@
 import json
 import logging
-import requests
 import urllib3
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -83,11 +82,6 @@ def list_projects(
     result = []
     for p in db_projects:
         try:
-            # Auto-assign session_id if missing
-            if not p.session_id:
-                import uuid
-                p.session_id = f"session-{uuid.uuid4()}"
-                db.commit()
             result.append(get_legacy_payload(p))
         except Exception:
             pass
@@ -320,12 +314,9 @@ def export_project(
                     document_text = ""
         except Exception as e:
             logger.warning(f"Failed to connect to {PREDICTION_URL}: {str(e)}. Falling back to local generation...")
-            target_port = os.getenv("PORT", "8000")
-            mock_url = f"http://127.0.0.1:{target_port}/api/mock-predict"
             try:
-                res_mock = requests.post(mock_url, json=payload, timeout=10)
-                mock_data = res_mock.json()
-                document_text = mock_data.get("text")
+                from utils.mock_llm import build_mock_response_text
+                document_text = build_mock_response_text(prompt)
             except Exception:
                 document_text = None
 
