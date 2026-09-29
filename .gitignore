@@ -52,3 +52,6 @@ ba-backend.tar
 ba-backend.tar
 ba-backend.tar
 frontend.tar
+
+# pytest
+.pytest_cache/
