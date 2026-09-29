@@ -1,6 +1,7 @@
 import json
 import re
 import requests
+import typing
 from pydantic import BaseModel, ConfigDict, model_validator
 from sqlalchemy.orm import Session
 import sys
@@ -59,10 +60,17 @@ def save_structured_state(db: Session, project: Project, state: dict):
     project.structured_state = json.dumps(state)
     db.commit()
 
-_LIST_OF_STRINGS_FIELDS = {
-    "business_requirements", "non_functional_requirements", "stakeholders",
-    "constraints", "assumptions", "risks", "integrations", "user_roles",
-}
+def _list_item_type(annotation) -> type | None:
+    """If `annotation` is `list[X]` (optionally wrapped in `| None`), return X;
+    otherwise None. Lets coercion below ask the model what shape each field is
+    instead of maintaining a separate hardcoded list of field names."""
+    for arg in typing.get_args(annotation) or (annotation,):
+        if arg is type(None):
+            continue
+        if typing.get_origin(arg) is list:
+            inner = typing.get_args(arg)
+            return inner[0] if inner else None
+    return None
 
 
 class FunctionalRequirementDelta(BaseModel):
@@ -119,14 +127,18 @@ class ProjectStateDelta(BaseModel):
             return {}
         coerced = {}
         for key, value in data.items():
-            if key not in cls.model_fields:
+            field = cls.model_fields.get(key)
+            if field is None:
                 continue  # hallucinated/unknown key -> dropped
-            if key in _LIST_OF_STRINGS_FIELDS:
+            item_type = _list_item_type(field.annotation)
+            if item_type is str:
                 if isinstance(value, list):
                     coerced[key] = [str(v) for v in value]
                 elif value not in (None, ""):
                     coerced[key] = [str(value)]
-            elif key == "functional_requirements":
+            elif item_type is not None:
+                # A list of nested models (e.g. functional_requirements): let the
+                # nested model's own validator coerce each element.
                 if isinstance(value, list):
                     coerced[key] = value
                 elif value not in (None, ""):
