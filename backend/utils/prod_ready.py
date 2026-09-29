@@ -18,9 +18,10 @@ load_dotenv()
 
 # Requests with a larger Content-Length than this are rejected before their body
 # is read, so a client can't force the server to buffer an arbitrarily large
-# payload into memory. Default 2MB comfortably covers this app's largest
-# legitimate request bodies (chat messages, project state updates).
-MAX_REQUEST_BODY_BYTES = int(os.getenv("MAX_REQUEST_BODY_BYTES", str(2 * 1024 * 1024)))
+# payload into memory. This app's largest legitimate request bodies (chat messages,
+# project state updates) are comfortably under 2MB; the 4MB default doubles that as
+# headroom for header/framing overhead so legitimate requests aren't rejected.
+MAX_REQUEST_BODY_BYTES = int(os.getenv("MAX_REQUEST_BODY_BYTES", str(4 * 1024 * 1024)))
 
 # Configure logging
 logging.basicConfig(

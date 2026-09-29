@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session, joinedload
 from database import engine, SessionLocal
 from utils.migrate import run_migration
 from utils.prod_ready import validate_environment, setup_global_exception_handlers, logger, request_with_retry, MAX_REQUEST_BODY_BYTES, make_error_response
-from utils.rate_limit import limiter
+from utils.rate_limit import limiter, RATE_LIMIT_PREDICT
 
 # Run database migrations and seed default data on startup
 run_migration()
@@ -288,7 +288,7 @@ class MessageRequest(BaseModel):
     sessionId: str | None = None
 
 @app.post("/api/predict")
-@limiter.limit("20/minute")
+@limiter.limit(RATE_LIMIT_PREDICT)
 def predict(
     request: Request,
     payload: MessageRequest,

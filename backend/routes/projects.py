@@ -19,7 +19,7 @@ from dependencies.auth import (
     require_project_owner
 )
 from utils.export import parse_markdown_to_pdf
-from utils.rate_limit import limiter
+from utils.rate_limit import limiter, RATE_LIMIT_EXPORT
 from services.project_state_manager import get_legacy_payload, get_structured_state, DEFAULT_STATE
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -264,7 +264,7 @@ def delete_project(
     return {"status": "deleted"}
 
 @router.get("/{project_id}/export")
-@limiter.limit("10/minute")
+@limiter.limit(RATE_LIMIT_EXPORT)
 def export_project(
     request: Request,
     project_id: int,

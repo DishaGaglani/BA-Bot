@@ -11,7 +11,7 @@ from models import User, UserRole
 from auth.jwt import hash_password, verify_password, create_access_token
 from services.audit import log_action
 from dependencies.auth import get_current_user, get_db
-from utils.rate_limit import limiter, AUTH_RATE_LIMIT
+from utils.rate_limit import limiter, RATE_LIMIT_AUTH
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -40,7 +40,7 @@ class LoginResponse(BaseModel):
     user: UserResponse
 
 @router.post("/register", response_model=UserResponse)
-@limiter.limit(AUTH_RATE_LIMIT)
+@limiter.limit(RATE_LIMIT_AUTH)
 def register(request: Request, response: Response, payload: UserRegisterRequest, db: Session = Depends(get_db)):
     # Check if self-registration is enabled in system settings
     settings_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "system_settings.json")
@@ -96,7 +96,7 @@ def register(request: Request, response: Response, payload: UserRegisterRequest,
     return new_user
 
 @router.post("/login", response_model=LoginResponse)
-@limiter.limit(AUTH_RATE_LIMIT)
+@limiter.limit(RATE_LIMIT_AUTH)
 def login(request: Request, response: Response, payload: UserLoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == payload.email).first()
     if not user or not verify_password(payload.password, user.password_hash):
