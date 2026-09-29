@@ -1,14 +1,4 @@
 {
-  "SUPER_ADMIN": {
-    "Create Project": true,
-    "Delete Project": true,
-    "Edit Project": true,
-    "Generate Document": true,
-    "Manage Users": true,
-    "Manage Prompts": true,
-    "Manage AI": true,
-    "View Analytics": true
-  },
   "ADMIN": {
     "Create Project": true,
     "Delete Project": true,
@@ -19,7 +9,7 @@
     "Manage AI": true,
     "View Analytics": true
   },
-  "BUSINESS_ANALYST": {
+  "USER": {
     "Create Project": true,
     "Delete Project": false,
     "Edit Project": true,
@@ -27,36 +17,6 @@
     "Manage Users": false,
     "Manage Prompts": false,
     "Manage AI": false,
-    "View Analytics": true
-  },
-  "PROJECT_MANAGER": {
-    "Create Project": true,
-    "Delete Project": true,
-    "Edit Project": true,
-    "Generate Document": true,
-    "Manage Users": false,
-    "Manage Prompts": false,
-    "Manage AI": false,
-    "View Analytics": true
-  },
-  "VIEWER": {
-    "Create Project": false,
-    "Delete Project": false,
-    "Edit Project": false,
-    "Generate Document": false,
-    "Manage Users": false,
-    "Manage Prompts": false,
-    "Manage AI": false,
-    "View Analytics": true
-  },
-  "REVIEWER": {
-    "Create Project": false,
-    "Delete Project": false,
-    "Edit Project": true,
-    "Generate Document": true,
-    "Manage Users": false,
-    "Manage Prompts": false,
-    "Manage AI": false,
-    "View Analytics": true
+    "View Analytics": false
   }
 }
