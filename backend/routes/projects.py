@@ -1,6 +1,8 @@
+import asyncio
 import json
 import logging
 import urllib3
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr
@@ -26,6 +28,14 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 # Disable SSL Warnings for self-signed certificates or proxy contexts
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# PDF/DOCX export makes a synchronous 30-60s LLM call. Starlette runs a sync `def`
+# endpoint on its shared default threadpool, the same one every other sync endpoint in
+# the app relies on — a burst of concurrent exports can exhaust it and stall unrelated
+# requests. Running the export work on this small, dedicated pool instead keeps that
+# blast radius contained to exports, without changing the endpoint's synchronous
+# download contract (the frontend still does one fetch and gets the file back).
+_EXPORT_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="export")
 
 PREDICTION_URL = os.getenv("PREDICTION_URL", "https://172.16.34.7:3000/api/v1/prediction/09ee3d2d-5d65-4793-a217-abd65e837366")
 
@@ -241,76 +251,93 @@ def delete_project(
     )
     return {"status": "deleted"}
 
+def _build_docx_export(project: Project, project_name: str):
+    from services.fdr_summary import generate_fdr_json
+    from utils.fdr_docx import build_fdr_docx
+
+    fdr_data = generate_fdr_json(project)
+    if not fdr_data.get("project_name"):
+        fdr_data["project_name"] = project_name
+    file_stream = build_fdr_docx(fdr_data)
+    filename = f"{project_name.replace(' ', '_')}_Requirement_Discovery_Form.docx"
+    media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    return file_stream, filename, media_type
+
+
+def _build_pdf_export(project_name: str, state: dict):
+    prompt = (
+        f"The requirements interview discovery workshop is complete for project '{project_name}'.\n\n"
+        "Here is the final gathered Project Requirements State gathered during the interview:\n"
+        f"{json.dumps(state, indent=2)}\n\n"
+        "Please generate and compile the final, detailed, and polished Requirements Discovery Document (FDR) "
+        "containing all project information, overview, stakeholders, business problem, business goals, timeline, functional requirements, and constraints. "
+        "Format the output using clear Markdown headings, bullet points, and numbered lists."
+    )
+
+    payload = {
+        "question": prompt,
+        "streaming": False
+    }
+
+    try:
+        from utils.prod_ready import request_with_retry
+        response = request_with_retry("POST", PREDICTION_URL, json=payload, timeout=30, verify=False)
+        res_data = response.json()
+
+        document_text = res_data.get("text")
+        if not document_text:
+            output_obj = res_data.get("output")
+            if isinstance(output_obj, dict):
+                document_text = output_obj.get("content", "")
+            elif isinstance(output_obj, str):
+                document_text = output_obj
+            else:
+                document_text = ""
+    except Exception as e:
+        logger.warning(f"Failed to connect to {PREDICTION_URL}: {str(e)}. Falling back to local generation...")
+        try:
+            from utils.mock_llm import build_mock_response_text
+            document_text = build_mock_response_text(prompt)
+        except Exception:
+            document_text = None
+
+        if not document_text:
+            document_text = f"# Final Discovery Requirements (FDR)\n\n## Project: {project_name}\n\n### Requirements Overview\n" + json.dumps(state, indent=2)
+
+    file_stream = parse_markdown_to_pdf(document_text)
+    filename = f"{project_name.replace(' ', '_')}_Requirements.pdf"
+    media_type = "application/pdf"
+    return file_stream, filename, media_type
+
+
 @router.get("/{project_id}/export")
-def export_project(
+async def export_project(
     project_id: int,
     format: str,
     project: Project = Depends(require_project_access(ProjectMemberRole.VIEWER)),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-
-
-    session_id = project.session_id
     project_name = project.name
     state = get_structured_state(project)
 
-    if format.lower() == "docx":
-        from services.fdr_summary import generate_fdr_json
-        from utils.fdr_docx import build_fdr_docx
+    fmt = format.lower()
+    if fmt not in ("docx", "pdf"):
+        raise HTTPException(status_code=400, detail="Invalid format. Supported: docx, pdf")
 
-        fdr_data = generate_fdr_json(project)
-        if not fdr_data.get("project_name"):
-            fdr_data["project_name"] = project_name
-        file_stream = build_fdr_docx(fdr_data)
-        filename = f"{project_name.replace(' ', '_')}_Requirement_Discovery_Form.docx"
-        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    elif format.lower() == "pdf":
-        prompt = (
-            f"The requirements interview discovery workshop is complete for project '{project_name}'.\n\n"
-            "Here is the final gathered Project Requirements State gathered during the interview:\n"
-            f"{json.dumps(state, indent=2)}\n\n"
-            "Please generate and compile the final, detailed, and polished Requirements Discovery Document (FDR) "
-            "containing all project information, overview, stakeholders, business problem, business goals, timeline, functional requirements, and constraints. "
-            "Format the output using clear Markdown headings, bullet points, and numbered lists."
+    # generate_fdr_json (docx) and the FDR prompt (pdf) both make a 30-60s synchronous LLM
+    # call; run that on the dedicated export pool instead of Starlette's shared default
+    # threadpool so a burst of concurrent exports can't starve unrelated requests.
+    loop = asyncio.get_running_loop()
+    if fmt == "docx":
+        file_stream, filename, media_type = await loop.run_in_executor(
+            _EXPORT_EXECUTOR, _build_docx_export, project, project_name
+        )
+    else:
+        file_stream, filename, media_type = await loop.run_in_executor(
+            _EXPORT_EXECUTOR, _build_pdf_export, project_name, state
         )
 
-        payload = {
-            "question": prompt,
-            "streaming": False
-        }
-
-        try:
-            from utils.prod_ready import request_with_retry
-            response = request_with_retry("POST", PREDICTION_URL, json=payload, timeout=30, verify=False)
-            res_data = response.json()
-
-            document_text = res_data.get("text")
-            if not document_text:
-                output_obj = res_data.get("output")
-                if isinstance(output_obj, dict):
-                    document_text = output_obj.get("content", "")
-                elif isinstance(output_obj, str):
-                    document_text = output_obj
-                else:
-                    document_text = ""
-        except Exception as e:
-            logger.warning(f"Failed to connect to {PREDICTION_URL}: {str(e)}. Falling back to local generation...")
-            try:
-                from utils.mock_llm import build_mock_response_text
-                document_text = build_mock_response_text(prompt)
-            except Exception:
-                document_text = None
-
-            if not document_text:
-                document_text = f"# Final Discovery Requirements (FDR)\n\n## Project: {project_name}\n\n### Requirements Overview\n" + json.dumps(state, indent=2)
-
-        file_stream = parse_markdown_to_pdf(document_text)
-        filename = f"{project_name.replace(' ', '_')}_Requirements.pdf"
-        media_type = "application/pdf"
-    else:
-        raise HTTPException(status_code=400, detail="Invalid format. Supported: docx, pdf")
-        
     # Log document generation in AuditLog
     log_action(
         db=db,

@@ -132,3 +132,47 @@ class TestTimestamps:
         created = make_user().created_at
         now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
         assert created.tzinfo is None and abs((now - created).total_seconds()) < 10
+
+
+# ------------------------------------------------------------------ issue 34: export must not block the shared threadpool
+class TestExportDoesNotBlockTheSharedThreadpool:
+    """A sync `def` endpoint runs on Starlette's shared default threadpool (anyio's
+    default worker threads), the same pool every other sync endpoint in the app relies
+    on. Export's LLM call must instead run on its own dedicated pool (routes.projects.
+    _EXPORT_EXECUTOR) so a burst of slow exports can't starve unrelated requests."""
+
+    def _run_export_recording_thread(self, monkeypatch, client, make_user, make_project, auth, fmt):
+        import threading
+
+        import utils.prod_ready as prod_ready
+
+        thread_names = []
+        original = prod_ready.request_with_retry
+
+        def _wrapped(*args, **kwargs):
+            thread_names.append(threading.current_thread().name)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(prod_ready, "request_with_retry", _wrapped)
+        if fmt == "docx":
+            import services.fdr_summary as fdr_summary
+
+            monkeypatch.setattr(fdr_summary, "request_with_retry", _wrapped)
+
+        owner = make_user()
+        project = make_project(owner)
+        r = client.get(f"/api/projects/{project.id}/export?format={fmt}", headers=auth(owner))
+        assert r.status_code == 200
+        return thread_names
+
+    def test_pdf_export_llm_call_runs_on_the_dedicated_export_pool(self, client, make_user, make_project, auth, llm, monkeypatch):
+        thread_names = self._run_export_recording_thread(monkeypatch, client, make_user, make_project, auth, "pdf")
+        assert thread_names and thread_names[0].startswith("export"), (
+            f"expected the export LLM call on the dedicated export pool, got thread(s) {thread_names}"
+        )
+
+    def test_docx_export_llm_call_runs_on_the_dedicated_export_pool(self, client, make_user, make_project, auth, llm, monkeypatch):
+        thread_names = self._run_export_recording_thread(monkeypatch, client, make_user, make_project, auth, "docx")
+        assert thread_names and thread_names[0].startswith("export"), (
+            f"expected the export LLM call on the dedicated export pool, got thread(s) {thread_names}"
+        )
