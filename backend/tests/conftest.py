@@ -45,7 +45,6 @@ import pytest  # noqa: E402
 import requests  # noqa: E402
 import uvicorn  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import event  # noqa: E402
 
 import app as backend_app  # noqa: E402
 from auth.jwt import create_access_token, hash_password  # noqa: E402
@@ -66,15 +65,8 @@ _PASSWORD_HASH = hash_password(DEFAULT_PASSWORD)
 # --------------------------------------------------------------------------- setup
 @pytest.fixture(scope="session", autouse=True)
 def _schema():
-    # SQLite serialises writers. Without a busy timeout the concurrency tests would
-    # measure "database is locked" errors rather than the application's own logic.
-    @event.listens_for(engine, "connect")
-    def _sqlite_pragmas(dbapi_conn, _):
-        cur = dbapi_conn.cursor()
-        cur.execute("PRAGMA journal_mode=WAL")
-        cur.execute("PRAGMA busy_timeout=5000")
-        cur.close()
-
+    # WAL mode and busy_timeout are now set for every sqlite connection by database.py
+    # itself (issue 33), so the concurrency tests get that behavior for free here too.
     engine.dispose()
     Base.metadata.create_all(bind=engine)
     yield

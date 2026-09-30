@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -15,6 +15,17 @@ if DATABASE_URL.startswith("sqlite"):
         DATABASE_URL,
         connect_args={"check_same_thread": False}
     )
+
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragmas(dbapi_connection, connection_record):
+        # WAL lets readers and a writer work concurrently instead of taking a
+        # database-wide lock for every write; busy_timeout makes a connection that
+        # does still hit a lock retry for a few seconds instead of immediately
+        # raising "database is locked".
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.close()
 else:
     # pool_pre_ping guards against handing out a connection the DB/proxy already
     # closed (common after container restarts or network blips); pool_recycle
