@@ -207,7 +207,9 @@ python app.py
 
 | Endpoint | Description |
 |---|---|
-| `http://127.0.0.1:8000/health` | Health check (DB + AI service reachability) |
+| `http://127.0.0.1:8000/health` | Combined health check (DB + AI service reachability), kept for backward compatibility |
+| `http://127.0.0.1:8000/health/live` | Liveness probe — process only, no dependency checks. Point a container orchestrator's restart-on-failure probe here |
+| `http://127.0.0.1:8000/health/ready` | Readiness probe — DB is a hard gate (503 if down); an AI outage is reported but doesn't fail it |
 | `http://127.0.0.1:8000/docs` | Interactive Swagger UI |
 
 ### 2 — Frontend
@@ -259,7 +261,9 @@ See [`DOCKER_INSTRUCTIONS.md`](DOCKER_INSTRUCTIONS.md) for environment configura
 | Method | Route | Description |
 |---|---|---|
 | `POST` | `/api/predict` | Send a chat message, stream the AI's reply via SSE |
-| `GET` | `/health` | Health check |
+| `GET` | `/health` | Combined health check, kept for backward compatibility |
+| `GET` | `/health/live` | Liveness probe (no dependency checks) |
+| `GET` | `/health/ready` | Readiness probe (DB is a hard gate; an AI outage is reported but not fatal) |
 | `*` | `/api/mock-predict` | Local fallback LLM stand-in (used when Forjinn is unreachable) |
 
 ### Admin — `/api/admin` (Admin/Super Admin only)
