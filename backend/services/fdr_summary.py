@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import sys
 
@@ -6,6 +7,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models import Project
 from services.project_state_manager import clean_json_text
 from utils.prod_ready import request_with_retry
+
+logger = logging.getLogger("ba-bot")
 
 PREDICTION_URL = os.getenv("PREDICTION_URL", "https://172.16.34.7:3000/api/v1/prediction/09ee3d2d-5d65-4793-a217-abd65e837366")
 
@@ -106,5 +109,5 @@ def generate_fdr_json(project: Project) -> dict:
             merged[key] = _sanitize_list_field(merged.get(key), fields)
         return merged
     except Exception as e:
-        print(f"[FDR SUMMARY WARNING] Failed to generate structured FDR JSON: {str(e)}")
+        logger.warning(f"Failed to generate structured FDR JSON: {str(e)}")
         return dict(FDR_SCHEMA)

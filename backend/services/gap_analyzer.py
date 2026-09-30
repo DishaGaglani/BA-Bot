@@ -1,9 +1,12 @@
 import sys
+import logging
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database import SessionLocal
 from models import DiscoverySection
+
+logger = logging.getLogger("ba-bot")
 
 # --- Predefined Section Dependency Graph ---
 # Key: section_key, Value: List of required parent section_keys that must be populated first
@@ -38,7 +41,7 @@ def analyze_gaps(state: dict, db=None) -> dict:
         # Load enabled sections from database, ordered by question_order
         sections_config = db.query(DiscoverySection).filter(DiscoverySection.enabled == True).order_by(DiscoverySection.question_order.asc()).all()
     except Exception as e:
-        print(f"Warning: Failed to fetch discovery sections from DB: {str(e)}")
+        logger.warning(f"Failed to fetch discovery sections from DB: {str(e)}")
         sections_config = []
 
     if close_db:
