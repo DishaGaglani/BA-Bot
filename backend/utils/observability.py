@@ -280,7 +280,7 @@ def setup_tracing(app, engine, *, tracer_provider=None, force: bool = False) -> 
         _provider = tracer_provider
 
         # Only requests that are not health checks or the metrics scrape are traced.
-        FastAPIInstrumentor.instrument_app(app, tracer_provider=tracer_provider, excluded_urls="/health$,/metrics$")
+        FastAPIInstrumentor.instrument_app(app, tracer_provider=tracer_provider, excluded_urls="/health$,/health/live$,/health/ready$,/metrics$")
         if app not in _instrumented_apps:
             _instrumented_apps.append(app)
         app.middleware_stack = None  # rebuilt on the next request so the tracing middleware is included, even if the app already served traffic
