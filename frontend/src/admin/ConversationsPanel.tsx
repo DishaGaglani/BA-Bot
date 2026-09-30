@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { API_BASE_URL } from '../config';
+import { API_BASE_URL, unwrapApiResponse } from '../config';
 
 interface ConversationData {
   project_id: number;
@@ -38,7 +38,7 @@ const ConversationsPanel: React.FC<ConversationsPanelProps> = ({ token }) => {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await unwrapApiResponse(res);
         setConversations(data);
       }
     } catch (err) {
@@ -61,7 +61,7 @@ const ConversationsPanel: React.FC<ConversationsPanelProps> = ({ token }) => {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await unwrapApiResponse(res);
         setMessages(data.conversations || []);
       }
     } catch (err) {

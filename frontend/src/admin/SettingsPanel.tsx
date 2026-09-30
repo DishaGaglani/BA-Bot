@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { API_BASE_URL } from '../config';
+import { API_BASE_URL, unwrapApiResponse } from '../config';
 
 interface SettingsData {
   workspaceName: string;
@@ -54,7 +54,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ token }) => {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
-        const data: SettingsData = await res.json();
+        const data: SettingsData = await unwrapApiResponse(res);
         setWorkspaceName(data.workspaceName);
         setAiModel(data.aiModel);
         setTokenTimeout(data.tokenTimeout);
@@ -74,7 +74,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ token }) => {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await unwrapApiResponse(res);
         setDiscoverySections(data);
       }
     } catch (err) {

@@ -5,15 +5,6 @@ import 'katex/dist/katex.min.css'
 import './App.css'
 import AdminPortal from './admin/AdminPortal'
 
-// The sign-in screen is skipped: the app silently authenticates as this account on
-// load instead of requiring a manual login. Change these to switch which account
-// the whole app runs as; the login form itself is left intact as a fallback below.
-// Deliberately not the admin account: logging in as ADMIN auto-routes to the admin
-// panel, which has its own separate (currently unfixed) response-unwrapping bug in
-// its sub-components — see the unwrapApiResponse note in config.ts.
-const AUTO_LOGIN_EMAIL = 'user@example.com'
-const AUTO_LOGIN_PASSWORD = 'user123'
-
 type PageView = 'dashboard' | 'new-project' | 'interview' | 'review' | 'export' | 'admin'
 type MessageRole = 'ai' | 'user'
 type UpdateSection = 'project' | 'overview' | 'discovery'
@@ -626,25 +617,6 @@ function App() {
   useEffect(() => {
     const fetchProfileAndProjects = async () => {
       if (!token) {
-        // No manual sign-in step: log in as the default account automatically.
-        // setToken re-triggers this effect, which then proceeds as a normal
-        // authenticated load. If this fails (backend down, account missing),
-        // fall through to isLoaded(true) so the login form is still reachable.
-        try {
-          const loginRes = await fetch(`${API_BASE_URL}/api/auth/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: AUTO_LOGIN_EMAIL, password: AUTO_LOGIN_PASSWORD })
-          })
-          if (loginRes.ok) {
-            const data = await unwrapApiResponse(loginRes)
-            localStorage.setItem('ba_bot_token', data.access_token)
-            setToken(data.access_token)
-            return
-          }
-        } catch (error) {
-          console.error('Auto-login failed', error)
-        }
         setIsLoaded(true)
         return
       }
