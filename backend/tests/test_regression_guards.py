@@ -1,5 +1,6 @@
 """One guard per previously-reported issue. Each asserts the *fixed* behavior, so it is
 marked pending_fix until that fix is merged, and becomes a permanent regression test after."""
+import inspect
 import json
 import os
 import subprocess
@@ -9,8 +10,10 @@ import warnings
 import pytest
 from sqlalchemy import event
 
+import routes.admin as admin_module
 from auth.jwt import create_access_token
 from database import engine
+from models import Message, UserRole
 from services.audit import log_action
 from services.conversation_manager import save_message
 from tests.conftest import BACKEND_DIR
@@ -33,6 +36,10 @@ def fake_create_engine(url, **kwargs):
     captured.update(url=url, kwargs=kwargs)
     return object()
 sqlalchemy.create_engine = fake_create_engine
+# database.py also registers a "connect" pragma listener on the engine it creates
+# (issue 33); the fake engine above is a plain object(), so make that a no-op here
+# too, the same way create_engine itself is faked, rather than letting it explode.
+sqlalchemy.event.listens_for = lambda *a, **k: (lambda fn: fn)
 import database
 print(json.dumps(captured, default=str))
 """
@@ -132,3 +139,57 @@ class TestTimestamps:
         created = make_user().created_at
         now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
         assert created.tzinfo is None and abs((now - created).total_seconds()) < 10
+
+
+# ------------------------------------------------------------------ issue 33: sqlite locking + dialect-specific queries
+class TestSqliteConcurrencySettings:
+    def test_wal_mode_is_enabled(self, db):
+        from sqlalchemy import text
+
+        assert db.execute(text("PRAGMA journal_mode")).scalar().lower() == "wal"
+
+    def test_a_busy_timeout_is_set_so_a_blocked_writer_waits_instead_of_failing_immediately(self, db):
+        from sqlalchemy import text
+
+        assert db.execute(text("PRAGMA busy_timeout")).scalar() > 0
+
+
+class TestAdminQueriesAreDialectAgnostic:
+    def test_no_sqlite_only_date_functions_remain(self):
+        source = inspect.getsource(admin_module)
+        assert "func.strftime" not in source, "func.strftime is SQLite-specific and raises on Postgres"
+
+    def test_dashboard_activity_is_bucketed_by_calendar_day(self, client, db, make_user, make_project, auth):
+        import datetime
+
+        admin = make_user(role=UserRole.ADMIN)
+        owner = make_user()
+        project = make_project(owner)
+        today = datetime.datetime.utcnow()
+        for i, days_ago in enumerate([0, 0, 1]):
+            db.add(Message(
+                project_id=project.id, role="ai", text=f"m{i}",
+                created_at=today - datetime.timedelta(days=days_ago, minutes=i),
+            ))
+        db.commit()
+
+        r = client.get("/api/admin/dashboard-stats", headers=auth(admin))
+        assert r.status_code == 200
+        activity = {row["label"]: row["value"] for row in unwrap(r)["activity"]}
+        assert activity[today.strftime("%a")] == 2
+
+    def test_analytics_projects_trend_is_bucketed_by_calendar_day(self, client, db, make_user, make_project, auth):
+        import datetime
+
+        admin = make_user(role=UserRole.ADMIN)
+        owner = make_user()
+        backdated = datetime.datetime.utcnow() - datetime.timedelta(days=2)
+        for name in ("p1", "p2"):
+            project = make_project(owner, name)
+            project.created_at = backdated
+        db.commit()
+
+        r = client.get("/api/admin/analytics", headers=auth(admin))
+        assert r.status_code == 200
+        trend = {row["date"]: row["count"] for row in unwrap(r)["projectsTrend"]}
+        assert trend[backdated.date().isoformat()] == 2

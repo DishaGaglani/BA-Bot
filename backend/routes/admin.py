@@ -44,26 +44,23 @@ def get_dashboard_stats(
     estimated_cost = token_usage * 0.00002
     
     # 7. Activity Chart Data (last 7 days of AI requests)
+    # Bucketed by day in Python rather than SQLite's dialect-specific date-formatting SQL function, which breaks on Postgres.
     seven_days_ago = datetime.datetime.utcnow() - datetime.timedelta(days=7)
-    activity_query = db.query(
-        func.strftime("%Y-%m-%d", Message.created_at).label("day"),
-        func.count(Message.id).label("count")
-    ).filter(
+    ai_created_ats = db.query(Message.created_at).filter(
         Message.role == "ai",
         Message.created_at >= seven_days_ago
-    ).group_by("day").order_by("day").all()
-    
+    ).all()
+    day_counts: dict[datetime.date, int] = {}
+    for (created_at,) in ai_created_ats:
+        if created_at:
+            day = created_at.date()
+            day_counts[day] = day_counts.get(day, 0) + 1
+
     # Map dates to chart activity
-    activity_data = []
-    for r in activity_query:
-        if r.day:
-            # Parse day name (Mon, Tue, Wed...)
-            try:
-                dt = datetime.datetime.strptime(r.day, "%Y-%m-%d")
-                day_name = dt.strftime("%a")
-            except Exception:
-                day_name = r.day
-            activity_data.append({"label": day_name, "value": r.count})
+    activity_data = [
+        {"label": day.strftime("%a"), "value": count}
+        for day, count in sorted(day_counts.items())
+    ]
             
     # Default list if empty to prevent empty charts rendering problems
     if not activity_data:
@@ -996,11 +993,14 @@ def get_admin_analytics(
     roles_data = [{"role": r[0].value, "count": r[1]} for r in role_stats]
     
     # 2. Projects trend
-    proj_stats = db.query(
-        func.strftime("%Y-%m-%d", Project.created_at).label("day"),
-        func.count(Project.id)
-    ).group_by("day").order_by("day").all()
-    projects_trend = [{"date": r[0], "count": r[1]} for r in proj_stats]
+    # Bucketed by day in Python rather than SQLite's dialect-specific date-formatting SQL function, which breaks on Postgres.
+    project_created_ats = db.query(Project.created_at).all()
+    project_day_counts: dict[str, int] = {}
+    for (created_at,) in project_created_ats:
+        if created_at:
+            day = created_at.date().isoformat()
+            project_day_counts[day] = project_day_counts.get(day, 0) + 1
+    projects_trend = [{"date": day, "count": count} for day, count in sorted(project_day_counts.items())]
     
     # 3. Top Active Users (most audit logs)
     top_users = db.query(
