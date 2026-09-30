@@ -247,11 +247,14 @@ def update_project_state(db: Session, project: Project, user_msg: str, ai_reply:
     save_structured_state(db, project, state)
     return state
 
-def get_legacy_payload(project: Project) -> dict:
-    """Bridge the internal structured state and messages into the frontend legacy payload format."""
+def get_legacy_payload(project: Project, include_messages: bool = True) -> dict:
+    """Bridge the internal structured state and messages into the frontend legacy payload
+    format. include_messages=False skips project.messages entirely (not just the field in
+    the returned dict) so callers that don't need chat history — e.g. the project list,
+    where every project's full transcript would otherwise be loaded — don't pay for it."""
     state = get_structured_state(project)
     gaps = analyze_gaps(state)
-    
+
     reqs = []
     for r in state.get("functional_requirements", []):
         if isinstance(r, dict):
@@ -266,20 +269,21 @@ def get_legacy_payload(project: Project) -> dict:
                 "priority": "Medium",
                 "confidence": 1.0
             })
-            
+
     messages_payload = []
-    if project.messages:
-        messages_payload = [
-            {"role": m.role, "text": m.text}
-            for m in sorted(project.messages, key=lambda x: x.created_at)
-        ]
-    else:
-        try:
-            if project.data:
-                existing_data = json.loads(project.data)
-                messages_payload = existing_data.get("messages", [])
-        except Exception:
-            pass
+    if include_messages:
+        if project.messages:
+            messages_payload = [
+                {"role": m.role, "text": m.text}
+                for m in sorted(project.messages, key=lambda x: x.created_at)
+            ]
+        else:
+            try:
+                if project.data:
+                    existing_data = json.loads(project.data)
+                    messages_payload = existing_data.get("messages", [])
+            except Exception:
+                pass
             
     return {
         "id": project.id,

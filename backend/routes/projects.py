@@ -1,10 +1,10 @@
 import json
 import logging
 import urllib3
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 import sys
 import os
 
@@ -60,23 +60,35 @@ class InviteRequest(BaseModel):
 
 @router.get("", response_model=list[dict])
 def list_projects(
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=200),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    # No joinedload(Project.messages) here: the list view (project tiles) never renders
+    # chat history, so eagerly loading every message of every project on every list call
+    # was pure waste — get_legacy_payload(include_messages=False) below skips it too,
+    # rather than trading the join for an N+1 lazy-load per project.
     if current_user.role == UserRole.ADMIN:
         # Admin sees every project, regardless of membership.
-        db_projects = db.query(Project).options(joinedload(Project.messages)).all()
+        query = db.query(Project)
     else:
         # A regular user sees only projects they started or were added to.
         cond = (Project.owner_id == current_user.id) | (ProjectMember.user_id == current_user.id)
-        db_projects = db.query(Project).options(joinedload(Project.messages)).outerjoin(ProjectMember).filter(
-            cond
-        ).distinct().all()
-    
+        query = db.query(Project).outerjoin(ProjectMember).filter(cond).distinct()
+
+    query = query.order_by(Project.id)
+    if page is not None or page_size is not None:
+        page = page or 1
+        page_size = page_size or 50
+        query = query.offset((page - 1) * page_size).limit(page_size)
+
+    db_projects = query.all()
+
     result = []
     for p in db_projects:
         try:
-            result.append(get_legacy_payload(p))
+            result.append(get_legacy_payload(p, include_messages=False))
         except Exception:
             pass
     return result
