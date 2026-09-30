@@ -655,15 +655,28 @@ function App() {
         if (response.ok) {
           const user = await unwrapApiResponse(response)
           setCurrentUser(user)
-          const list = await loadProjects(token)
+          await loadProjects(token)
           setIsLoaded(true)
-          
+
           if (activeProjectId) {
-            const found = list.find((p: ProjectData) => p.id === activeProjectId)
-            if (found) {
-              setProjectData(sanitizeProjectData(found))
-              void loadProjectMembers(activeProjectId)
-            } else {
+            // The project list no longer carries full chat history (it's not needed
+            // there and was being loaded for every project on every list call), so the
+            // resumed active project's full messages have to come from its own detail
+            // endpoint instead of a `list.find(...)` lookup.
+            try {
+              const detailRes = await fetch(`${API_BASE_URL}/api/projects/${activeProjectId}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+              })
+              if (detailRes.ok) {
+                const found = await unwrapApiResponse(detailRes)
+                setProjectData(sanitizeProjectData(found))
+                void loadProjectMembers(activeProjectId)
+              } else {
+                setActiveProjectId(null)
+                localStorage.removeItem('ba_bot_active_project_id')
+              }
+            } catch (error) {
+              console.error('Failed to resume active project', error)
               setActiveProjectId(null)
               localStorage.removeItem('ba_bot_active_project_id')
             }

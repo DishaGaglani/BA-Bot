@@ -132,3 +132,62 @@ class TestTimestamps:
         created = make_user().created_at
         now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
         assert created.tzinfo is None and abs((now - created).total_seconds()) < 10
+
+
+# ------------------------------------------------------------------ issue 36: project list must not load full chat history
+class TestProjectListDoesNotLoadMessageHistory:
+    def test_no_query_touches_the_messages_table(self, client, db, make_user, make_project, auth):
+        owner = make_user()
+        project = make_project(owner)
+        save_message(db, project.id, "user", "hello")
+        save_message(db, project.id, "ai", "hi there")
+
+        statements = []
+        listener = lambda conn, cursor, statement, *a: statements.append(statement)
+        event.listen(engine, "before_cursor_execute", listener)
+        try:
+            r = client.get("/api/projects", headers=auth(owner))
+        finally:
+            event.remove(engine, "before_cursor_execute", listener)
+
+        assert r.status_code == 200
+        touched_messages = [s for s in statements if "messages" in s.lower()]
+        assert touched_messages == [], f"listing projects queried the messages table: {touched_messages}"
+
+    def test_response_payload_omits_message_history(self, client, db, make_user, make_project, auth):
+        owner = make_user()
+        project = make_project(owner)
+        save_message(db, project.id, "user", "hello")
+        save_message(db, project.id, "ai", "hi there")
+
+        listed = unwrap(client.get("/api/projects", headers=auth(owner)))
+        entry = next(p for p in listed if p["id"] == project.id)
+        assert entry["messages"] == []
+
+    def test_single_project_detail_still_returns_full_history(self, client, db, make_user, make_project, auth):
+        owner = make_user()
+        project = make_project(owner)
+        save_message(db, project.id, "user", "hello")
+        save_message(db, project.id, "ai", "hi there")
+
+        detail = unwrap(client.get(f"/api/projects/{project.id}", headers=auth(owner)))
+        assert [m["text"] for m in detail["messages"]] == ["hello", "hi there"]
+
+
+class TestProjectListPagination:
+    def test_page_and_page_size_slice_results_in_a_stable_order(self, client, db, make_user, make_project, auth):
+        owner = make_user()
+        projects = [make_project(owner, f"p{i}") for i in range(5)]
+        ids_in_order = [p.id for p in projects]
+
+        page1 = unwrap(client.get("/api/projects?page=1&page_size=2", headers=auth(owner)))
+        page2 = unwrap(client.get("/api/projects?page=2&page_size=2", headers=auth(owner)))
+
+        assert [p["id"] for p in page1] == ids_in_order[:2]
+        assert [p["id"] for p in page2] == ids_in_order[2:4]
+
+    def test_omitting_pagination_params_returns_everything(self, client, db, make_user, make_project, auth):
+        owner = make_user()
+        projects = [make_project(owner, f"q{i}") for i in range(3)]
+        listed = unwrap(client.get("/api/projects", headers=auth(owner)))
+        assert {p.id for p in projects} <= {p["id"] for p in listed}
