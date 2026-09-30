@@ -148,7 +148,7 @@ async def standardize_responses_middleware(request: Request, call_next):
     # Wrap successful JSON responses
     content_type = response.headers.get("content-type", "")
     if "application/json" in content_type and response.status_code < 400:
-        if request.url.path in ["/health", "/api/mock-predict"]:
+        if request.url.path in ["/health", "/health/live", "/health/ready", "/api/mock-predict"]:
             return response
             
         # Consume the response body stream
@@ -219,14 +219,37 @@ def health_live():
     return {"status": "alive"}
 
 
+def _check_storage_writable() -> bool:
+    """Same write-then-remove probe validate_environment() does at startup, run again
+    here for readiness: on rootless Podman a bind-mounted volume can be readable but not
+    writable by this container's mapped UID/GID if the host-side subuid/subgid range
+    doesn't line up, and that failure mode wouldn't show up until the app actually tries
+    to write an upload."""
+    upload_dir = os.getenv("UPLOAD_DIR", "uploads")
+    try:
+        os.makedirs(upload_dir, exist_ok=True)
+        probe_file = os.path.join(upload_dir, ".health_ready_probe")
+        with open(probe_file, "w") as f:
+            f.write("probe")
+        os.remove(probe_file)
+        return True
+    except Exception:
+        return False
+
+
 @app.get("/health/ready")
 def health_ready(db: Session = Depends(get_db)):
-    """Readiness: the database answers, so this instance can take traffic."""
+    """Readiness: the database answers and the upload volume is writable, so this
+    instance can actually take traffic."""
     from sqlalchemy import text
     try:
         db.execute(text("SELECT 1"))
     except Exception:
         raise HTTPException(status_code=503, detail="Database unavailable")
+
+    if not _check_storage_writable():
+        raise HTTPException(status_code=503, detail="Storage volume not writable")
+
     return {"status": "ready"}
 
 

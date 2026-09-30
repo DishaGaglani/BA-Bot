@@ -121,11 +121,19 @@ the Docker commands elsewhere in this document; just swap `docker compose` for `
     server (reverse proxy, firewall rule, etc.): change `frontend`'s `ports:` entry in
     `docker-compose.yml` from `"80:80"` to e.g. `"8080:80"`.
 - **Volume ownership**: rootless Podman remaps container UIDs through your host user's
-  `/etc/subuid`/`/etc/subgid` ranges. This repo doesn't need Podman's `:U` volume mount option to
-  handle that (it also isn't supported inside a compose file by podman-compose) — `backend`'s
-  `docker-entrypoint.sh` already repairs volume ownership itself on every start, from inside the
-  container's own user namespace, so it's already namespace-safe under both Docker and rootless
-  Podman without any Podman-specific code. See the comment at the top of that script for why.
+  `/etc/subuid`/`/etc/subgid` ranges. With the default setup this repo's own compose files use (no
+  `--userns` override), the container still starts as uid 0 *inside its own user namespace*, so
+  `backend`'s `docker-entrypoint.sh` repairs volume ownership itself on every start exactly as it
+  does under Docker — the subuid/subgid remapping to real host UIDs happens beneath that namespace
+  and the script never needs to know about it. This repo doesn't need Podman's `:U` volume mount
+  option for this (it also isn't supported inside a compose file by podman-compose).
+  If you instead run the backend image directly with `podman run --userns=keep-id` (common so a
+  bind-mounted host directory's ownership matches 1:1 between host and container), the container
+  starts as your own host uid rather than a remapped root, so the entrypoint's ownership-repair
+  step is skipped — in that case the mounted directory's owner on the host must already match
+  your uid, or the entrypoint now fails fast with a message telling you which directory and uid,
+  instead of the app failing deeper into Python startup. See the comment at the top of that script
+  for the full breakdown.
 
 ### Verifying a clean startup
 
