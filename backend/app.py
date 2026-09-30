@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 
 from database import engine, SessionLocal
-from utils.migrate import run_migration
+from utils.db_bootstrap import run_migration
 from utils.prod_ready import validate_environment, setup_global_exception_handlers, logger, request_with_retry
 from utils import metrics, observability
 from utils.mock_llm import build_mock_response_text, generate_mock_stream_lines

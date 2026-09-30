@@ -45,7 +45,9 @@ class TestEngineConfiguration:
         return json.loads(out.stdout.strip().splitlines()[-1])["kwargs"]
 
     def test_sqlite_allows_use_across_request_threads(self):
-        assert self._engine_kwargs("sqlite:///x.db")["connect_args"] == {"check_same_thread": False}
+        # timeout=15 is the SQLite busy_timeout (issue 6): how long a connection waits for
+        # another writer's lock before raising "database is locked".
+        assert self._engine_kwargs("sqlite:///x.db")["connect_args"] == {"check_same_thread": False, "timeout": 15}
 
     def test_sqlite_only_options_are_not_sent_to_other_databases(self):
         assert "check_same_thread" not in self._engine_kwargs("postgresql://u:p@db/app").get("connect_args", {})

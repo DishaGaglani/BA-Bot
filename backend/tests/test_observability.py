@@ -526,7 +526,7 @@ def test_no_stray_print_statements_in_request_paths():
     root = Path(backend_app.__file__).parent
     offenders = []
     for path in [root / "app.py", *root.glob("services/*.py"), *root.glob("routes/*.py"), *root.glob("utils/*.py")]:
-        if path.name == "migrate.py":  # one-shot startup migration, runs before logging exists
+        if path.name == "db_bootstrap.py":  # one-shot startup migration, runs before logging exists
             continue
         for n, line in enumerate(path.read_text().splitlines(), 1):
             if re.match(r"\s*print\(", line):
@@ -674,7 +674,7 @@ class TestSafeConfiguration:
         }
         code = (
             "import sys; sys.path.insert(0, %r);"
-            "import utils.migrate as m; m.run_migration = lambda: None;"
+            "import utils.db_bootstrap as m; m.run_migration = lambda: None;"
             "import app; print('BOOT-OK')" % str(__import__("pathlib").Path(backend_app.__file__).parent)
         )
         out = subprocess.run([sys.executable, "-W", "ignore", "-c", code], env=env, capture_output=True, text=True, timeout=60)
