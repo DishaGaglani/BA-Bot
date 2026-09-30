@@ -1,10 +1,13 @@
 from sqlalchemy.orm import Session
+import logging
 import datetime
 import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models import Message
+
+logger = logging.getLogger("ba-bot")
 
 def save_message(db: Session, project_id: int, role: str, text: str) -> Message:
     """Save a single conversation message in the database."""
@@ -22,7 +25,7 @@ def save_message(db: Session, project_id: int, role: str, text: str) -> Message:
         db.refresh(message)
     except Exception as e:
         db.rollback()
-        print(f"Error saving message: {str(e)}")
+        logger.error(f"Error saving message: {str(e)}", exc_info=True)
         raise e
     return message
 
