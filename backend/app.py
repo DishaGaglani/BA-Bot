@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, Depends, status, Request, Response
+from fastapi import FastAPI, HTTPException, Depends, status, Request, Response, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -270,6 +270,7 @@ class MessageRequest(BaseModel):
 @app.post("/api/predict")
 def predict(
     payload: MessageRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -378,141 +379,167 @@ def predict(
 
     project_id = project.id
     question = payload.question
+    # Shared with _save_chat_reply (a BackgroundTask, not part of this generator) so
+    # whatever the model produced survives even if _chat_events itself gets torn down
+    # by GeneratorExit partway through — see that function's docstring for why.
+    chat_state = {"chunks": [], "stream_session_id": None}
 
     def _chat_events(outcome_state):
         from database import SessionLocal
         bg_db = SessionLocal()
-        ai_chunks = []
-        stream_session_id = None
         current_payload = payload_dict.copy()
-        
-        # Retry loop (up to 2 attempts) to handle expired/missing Forjinn session errors
-        for attempt in range(2):
-            try:
-                # Use request_with_retry for robust LLM streaming connection
-                response = request_with_retry("POST", PREDICTION_URL, json=current_payload, stream=True, timeout=90, verify=False)
-                
-                # Check for session not found / expired error code (400 or 404)
-                if response.status_code in [400, 404]:
-                    try:
-                        err_content = response.json()
-                        err_msg = str(err_content)
-                    except Exception:
-                        err_msg = response.text
-                    
-                    if attempt == 0:
+
+        try:
+            # Retry loop (up to 2 attempts) to handle expired/missing Forjinn session errors
+            for attempt in range(2):
+                try:
+                    # Use request_with_retry for robust LLM streaming connection
+                    response = request_with_retry("POST", PREDICTION_URL, json=current_payload, stream=True, timeout=90, verify=False)
+
+                    # Check for session not found / expired error code (400 or 404)
+                    if response.status_code in [400, 404]:
+                        try:
+                            err_content = response.json()
+                            err_msg = str(err_content)
+                        except Exception:
+                            err_msg = response.text
+
+                        if attempt == 0:
+                            import uuid
+                            new_sid = f"session-{uuid.uuid4()}"
+                            logger.warning(f"Forjinn session expired/not found. Re-creating session: {new_sid}. Error: {err_msg[:300]}")  # capped: upstream errors can echo the prompt
+                            # Persist new session ID in the database
+                            bg_project = bg_db.query(Project).filter(Project.id == project_id).with_for_update().first()
+                            if bg_project:
+                                bg_project.forjinn_session_id = new_sid
+                                bg_project.session_id = new_sid
+                                bg_db.commit()
+
+                            current_payload["chatId"] = new_sid
+                            current_payload["overrideConfig"] = {"sessionId": new_sid}
+                            continue
+
+                    # Process the streaming lines
+                    session_expired_in_stream = False
+                    for line in response.iter_lines():
+                        if line:
+                            line_str = line.decode("utf-8", "ignore").strip()
+                            if line_str.startswith("data:"):
+                                try:
+                                    data_content = line_str[5:].strip()
+                                    chunk_data = json.loads(data_content)
+
+                                    # Check if error event represents an expired/missing session
+                                    if chunk_data.get("event") == "error":
+                                        err_msg = chunk_data.get("message", "") or ""
+                                        if "session not found" in err_msg.lower() or "expired" in err_msg.lower():
+                                            if attempt == 0:
+                                                session_expired_in_stream = True
+                                                break
+
+                                    if chunk_data.get("event") == "token":
+                                        token_val = chunk_data.get("data")
+                                        if isinstance(token_val, str):
+                                            chat_state["chunks"].append(token_val)
+                                    elif chunk_data.get("event") == "metadata":
+                                        meta_data = chunk_data.get("data")
+                                        if isinstance(meta_data, dict):
+                                            new_sid = meta_data.get("chatId") or meta_data.get("sessionId")
+                                            if new_sid:
+                                                chat_state["stream_session_id"] = new_sid
+                                except Exception:
+                                    pass
+
+                                yield f"{line_str}\n\n"
+
+                    if session_expired_in_stream and attempt == 0:
                         import uuid
                         new_sid = f"session-{uuid.uuid4()}"
-                        logger.warning(f"Forjinn session expired/not found. Re-creating session: {new_sid}. Error: {err_msg[:300]}")  # capped: upstream errors can echo the prompt
-                        # Persist new session ID in the database
+                        logger.warning(f"Stream error event: Session expired/not found. Re-creating session: {new_sid}")
                         bg_project = bg_db.query(Project).filter(Project.id == project_id).with_for_update().first()
                         if bg_project:
                             bg_project.forjinn_session_id = new_sid
                             bg_project.session_id = new_sid
                             bg_db.commit()
-                        
+
                         current_payload["chatId"] = new_sid
                         current_payload["overrideConfig"] = {"sessionId": new_sid}
+                        chat_state["chunks"] = []
                         continue
-                
-                # Process the streaming lines
-                session_expired_in_stream = False
-                for line in response.iter_lines():
-                    if line:
-                        line_str = line.decode("utf-8", "ignore").strip()
-                        if line_str.startswith("data:"):
+
+                    # Successful response received
+                    break
+
+                except Exception as exc:
+                    # Reaching this branch always means the real provider call failed, even
+                    # though the mock fallback below may still let the client get a reply —
+                    # record that as an error so it shows up in metrics/alerting rather than
+                    # being masked as a plain success.
+                    outcome_state["value"] = "error"
+                    logger.warning(f"Connection error targeting {PREDICTION_URL}: {str(exc)}")
+                    logger.warning("Generating local mock response in-process (no HTTP loopback)...")
+                    try:
+                        for line_str in generate_mock_stream_lines():
                             try:
                                 data_content = line_str[5:].strip()
                                 chunk_data = json.loads(data_content)
-                                
-                                # Check if error event represents an expired/missing session
-                                if chunk_data.get("event") == "error":
-                                    err_msg = chunk_data.get("message", "") or ""
-                                    if "session not found" in err_msg.lower() or "expired" in err_msg.lower():
-                                        if attempt == 0:
-                                            session_expired_in_stream = True
-                                            break
-                                
                                 if chunk_data.get("event") == "token":
                                     token_val = chunk_data.get("data")
                                     if isinstance(token_val, str):
-                                        ai_chunks.append(token_val)
+                                        chat_state["chunks"].append(token_val)
                                 elif chunk_data.get("event") == "metadata":
                                     meta_data = chunk_data.get("data")
                                     if isinstance(meta_data, dict):
                                         new_sid = meta_data.get("chatId") or meta_data.get("sessionId")
                                         if new_sid:
-                                            stream_session_id = new_sid
+                                            chat_state["stream_session_id"] = new_sid
                             except Exception:
                                 pass
-                            
                             yield f"{line_str}\n\n"
-                
-                if session_expired_in_stream and attempt == 0:
-                    import uuid
-                    new_sid = f"session-{uuid.uuid4()}"
-                    logger.warning(f"Stream error event: Session expired/not found. Re-creating session: {new_sid}")
-                    bg_project = bg_db.query(Project).filter(Project.id == project_id).with_for_update().first()
-                    if bg_project:
-                        bg_project.forjinn_session_id = new_sid
-                        bg_project.session_id = new_sid
-                        bg_db.commit()
-                    
-                    current_payload["chatId"] = new_sid
-                    current_payload["overrideConfig"] = {"sessionId": new_sid}
-                    ai_chunks = []
-                    continue
-                
-                # Successful response received
-                break
-                
-            except Exception as exc:
-                # Reaching this branch always means the real provider call failed, even
-                # though the mock fallback below may still let the client get a reply —
-                # record that as an error so it shows up in metrics/alerting rather than
-                # being masked as a plain success.
-                outcome_state["value"] = "error"
-                logger.warning(f"Connection error targeting {PREDICTION_URL}: {str(exc)}")
-                logger.warning("Generating local mock response in-process (no HTTP loopback)...")
-                try:
-                    for line_str in generate_mock_stream_lines():
-                        try:
-                            data_content = line_str[5:].strip()
-                            chunk_data = json.loads(data_content)
-                            if chunk_data.get("event") == "token":
-                                token_val = chunk_data.get("data")
-                                if isinstance(token_val, str):
-                                    ai_chunks.append(token_val)
-                            elif chunk_data.get("event") == "metadata":
-                                meta_data = chunk_data.get("data")
-                                if isinstance(meta_data, dict):
-                                    new_sid = meta_data.get("chatId") or meta_data.get("sessionId")
-                                    if new_sid:
-                                        stream_session_id = new_sid
-                        except Exception:
-                            pass
-                        yield f"{line_str}\n\n"
-                    break
-                except Exception as fallback_exc:
-                    logger.error(f"Local mock-predict fallback failed: {fallback_exc}")
-                    raise exc
-            
-        # Post-chat completion processing using the dedicated background session
+                        break
+                    except Exception as fallback_exc:
+                        logger.error(f"Local mock-predict fallback failed: {fallback_exc}")
+                        raise exc
+        finally:
+            # Only used for the mid-stream session-recreation commits above; the actual
+            # chat reply is saved by _save_chat_reply, on its own session, as a
+            # BackgroundTask (see there for why). Closing this one here, in a finally,
+            # means it happens even if a client disconnect tears this generator down
+            # with GeneratorExit mid-loop, instead of leaking a DB connection on every
+            # disconnect the way leaving this close() after the loop used to.
+            bg_db.close()
+
+    def _save_chat_reply():
+        """A FastAPI BackgroundTask, not part of the SSE generator above: Starlette calls
+        response.background() once the stream ends *or* is cancelled by a client
+        disconnect (StreamingResponse.__call__ does this outside the task group that
+        races streaming against disconnect-detection), so this still runs — and still
+        sees everything chat_state accumulated up to that point — even when
+        _chat_events itself gets torn down by GeneratorExit before reaching its own
+        end. This is also where the ~45s LLM state-extraction call inside
+        update_project_state ends up: on a background-task thread, not the one serving
+        the live SSE bytes to the client.
+        """
+        from database import SessionLocal
+        bg_db = SessionLocal()
         try:
-            ai_reply = "".join(ai_chunks).strip()
+            ai_reply = "".join(chat_state["chunks"]).strip()
             metrics.record_llm_tokens("chat", output_tokens=metrics.estimate_tokens(ai_reply))
-            if ai_reply:
-                bg_project = bg_db.query(Project).options(joinedload(Project.messages)).filter(Project.id == project_id).first()
-                if bg_project:
-                    if stream_session_id:
-                        bg_project.forjinn_session_id = stream_session_id
-                        bg_project.session_id = stream_session_id
-                    save_message(bg_db, bg_project.id, "ai", ai_reply)
-                    update_project_state(bg_db, bg_project, question, ai_reply, active_section=active_section)
-                    legacy_payload = get_legacy_payload(bg_project)
-                    bg_project.data = json.dumps(legacy_payload)
-                    bg_db.commit()
-                    logger.info(f"State updates completed successfully for project {bg_project.id}.")
+            if not ai_reply:
+                return
+            bg_project = bg_db.query(Project).options(joinedload(Project.messages)).filter(Project.id == project_id).first()
+            if not bg_project:
+                return
+            stream_session_id = chat_state["stream_session_id"]
+            if stream_session_id:
+                bg_project.forjinn_session_id = stream_session_id
+                bg_project.session_id = stream_session_id
+            save_message(bg_db, bg_project.id, "ai", ai_reply)
+            update_project_state(bg_db, bg_project, question, ai_reply, active_section=active_section)
+            legacy_payload = get_legacy_payload(bg_project)
+            bg_project.data = json.dumps(legacy_payload)
+            bg_db.commit()
+            logger.info(f"State updates completed successfully for project {bg_project.id}.")
         except Exception as exc:
             logger.error(f"Post-chat update failed: {str(exc)}", exc_info=True)
             observability.capture_exception(exc, source="post_chat_update", project_id=project_id)
@@ -536,6 +563,7 @@ def predict(
             metrics.CHAT_STREAMS_ACTIVE.dec()
             metrics.record_llm_call("chat_stream", time.perf_counter() - started, outcome_state["value"])
 
+    background_tasks.add_task(_save_chat_reply)
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 

@@ -57,7 +57,20 @@ class TestConcurrentChat:
 
         assert [r.status_code for r in responses] == [200] * count
         assert all(_sse_text(r) == "".join(llm.stream_tokens) for r in responses)
-        db.expire_all()
+
+        # The AI reply is saved by a BackgroundTask that Starlette runs after the response's
+        # bytes are already fully sent (see StreamingResponse.__call__), so a client seeing
+        # the request complete doesn't guarantee the save has happened yet — poll briefly.
+        def _all_saved():
+            db.expire_all()
+            return all(
+                db.query(Message).filter_by(project_id=p.id, role="ai").count() == 1 for p in projects
+            )
+
+        deadline = time.time() + 5
+        while time.time() < deadline and not _all_saved():
+            time.sleep(0.1)
+
         for i, project in enumerate(projects):
             rows = db.query(Message).filter_by(project_id=project.id).order_by(Message.id).all()
             assert [m.role for m in rows] == ["user", "ai"], f"project {i} has {[m.role for m in rows]}"
@@ -77,7 +90,18 @@ class TestConcurrentChat:
         db.expire_all()
         users = {m.text for m in db.query(Message).filter_by(project_id=project.id, role="user")}
         assert users == {f"msg-{i}" for i in range(count)}  # nothing lost, nothing duplicated
-        assert db.query(Message).filter_by(project_id=project.id, role="ai").count() == count
+
+        # The AI reply is saved by a BackgroundTask that Starlette runs after the response's
+        # bytes are already fully sent (see StreamingResponse.__call__), so a client seeing
+        # the request complete doesn't guarantee the save has happened yet — poll briefly.
+        deadline = time.time() + 5
+        ai_count = 0
+        while time.time() < deadline and ai_count < count:
+            db.expire_all()
+            ai_count = db.query(Message).filter_by(project_id=project.id, role="ai").count()
+            if ai_count < count:
+                time.sleep(0.1)
+        assert ai_count == count
 
     def test_rejected_chats_leave_no_trace_under_concurrency(self, live_url, db, llm, make_user, make_project, auth):
         owner = make_user()
