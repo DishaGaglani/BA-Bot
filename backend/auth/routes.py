@@ -6,7 +6,7 @@ import os
 import json
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from database import SessionLocal
+from database import SessionLocal, utcnow
 from models import User, UserRole
 from auth.jwt import hash_password, verify_password, create_access_token
 from services.audit import log_action
@@ -131,8 +131,7 @@ def login(request: Request, response: Response, payload: UserLoginRequest, db: S
     token = create_access_token(data=token_data)
     
     # Update last login time
-    import datetime
-    user.last_login = datetime.datetime.utcnow()
+    user.last_login = utcnow()
     db.commit()
     
     # Log successful login

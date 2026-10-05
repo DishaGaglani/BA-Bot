@@ -14,7 +14,7 @@ from database import engine
 from services.audit import log_action
 from services.conversation_manager import save_message
 from tests.conftest import BACKEND_DIR
-from tests.helpers import pending_fix, unwrap
+from tests.helpers import unwrap
 
 
 def _python(code, env_overrides=None, *args):
@@ -116,7 +116,6 @@ class TestLogging:
 # ------------------------------------------------------------------ issue 10: deprecated datetime.utcnow
 class TestTimestamps:
     @pytest.mark.skipif(sys.version_info < (3, 12), reason="utcnow() is only deprecated from Python 3.12")
-    @pending_fix("issue 10", "datetime.utcnow() is used throughout models, auth and services")
     def test_no_deprecated_utcnow_calls_on_common_paths(self, db, make_user, make_project):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
