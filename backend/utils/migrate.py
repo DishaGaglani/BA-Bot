@@ -2,6 +2,7 @@ import sqlite3
 import json
 import sys
 import os
+import uuid
 
 # Set up paths so we can import from database and models
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -117,11 +118,11 @@ def run_migration():
                     )
                     db.add(new_project)
                     
-                    # Insert ProjectMember PROJECT_MANAGER
+                    # Insert ProjectMember as a full MEMBER
                     member = ProjectMember(
                         project_id=old_id,
                         user_id=admin_user_id,
-                        role=ProjectMemberRole.PROJECT_MANAGER
+                        role=ProjectMemberRole.MEMBER
                     )
                     db.add(member)
             
@@ -162,7 +163,6 @@ def run_migration():
                 ("users", "department", "TEXT DEFAULT 'IT'"),
                 ("users", "status", "TEXT DEFAULT 'ACTIVE'"),
                 ("users", "last_login", "TEXT"),
-                ("users", "team_id", "INTEGER"),
                 ("messages", "token_count", "INTEGER DEFAULT 0")
             ]:
                 try:
@@ -179,18 +179,58 @@ def run_migration():
             except sqlite3.OperationalError as e:
                 print(f"Warning during member role migration: {str(e)}")
 
+            # Role model simplified to ADMIN/USER (accounts) and MEMBER/VIEWER (per-project).
+            # Column values are plain strings on SQLite (no DB-level CHECK constraint tied to
+            # the enum), so this is a data fix, not a schema change: any row still holding one
+            # of the old values would otherwise fail to load under the new, smaller enum.
+            try:
+                cursor.execute("UPDATE users SET role = 'ADMIN' WHERE role = 'SUPER_ADMIN';")
+                cursor.execute(
+                    "UPDATE users SET role = 'USER' "
+                    "WHERE role IN ('BUSINESS_ANALYST', 'PROJECT_MANAGER', 'VIEWER', 'REVIEWER');"
+                )
+                cursor.execute(
+                    "UPDATE project_members SET role = 'MEMBER' "
+                    "WHERE role IN ('PROJECT_MANAGER', 'BUSINESS_ANALYST', 'CONTRIBUTOR');"
+                )
+                # No more review/approval stage: anything not yet published goes back to DRAFT,
+                # where it can be edited and published directly.
+                cursor.execute(
+                    "UPDATE projects SET status = 'DRAFT' WHERE status IN ('PENDING_REVIEW', 'APPROVED');"
+                )
+                print("Migrated old account/project roles and project statuses to the simplified role model.")
+            except sqlite3.OperationalError as e:
+                print(f"Warning during role model migration: {str(e)}")
+
+            # The Team feature (and the per-project role it inherited) has been removed. The
+            # tables are dropped; users.team_id is left as an unused column rather than risking
+            # a DROP COLUMN on a SQLite version that may not support it.
+            try:
+                cursor.execute("DROP TABLE IF EXISTS team_projects;")
+                cursor.execute("DROP TABLE IF EXISTS teams;")
+            except sqlite3.OperationalError as e:
+                print(f"Warning while dropping the removed Team tables: {str(e)}")
+
             conn.commit()
             conn.close()
-            
-        # Seed test users
+
+        # Backfill session_id for any legacy projects that predate it always being set
+        # at creation time. Done once here (not on every GET /api/projects) so that
+        # route stays read-only per RFC 9110.
+        legacy_projects = db.query(Project).filter(
+            (Project.session_id == None) | (Project.session_id == "")
+        ).all()
+        if legacy_projects:
+            for legacy_project in legacy_projects:
+                legacy_project.session_id = f"session-{uuid.uuid4()}"
+            db.commit()
+            print(f"Backfilled session_id for {len(legacy_projects)} legacy project(s).")
+
+        # Seed demo users, one per account type
         print("Ensuring default system users for all roles exist...")
         users_to_seed = [
-            ("Super Admin", "superadmin@example.com", "admin123", UserRole.SUPER_ADMIN),
             ("Admin User", "admin@example.com", "admin123", UserRole.ADMIN),
-            ("Business Analyst", "ba@example.com", "ba123", UserRole.BUSINESS_ANALYST),
-            ("Project Manager", "pm@example.com", "pm123", UserRole.PROJECT_MANAGER),
-            ("Viewer User", "viewer@example.com", "viewer123", UserRole.VIEWER),
-            ("Reviewer User", "reviewer@example.com", "reviewer123", UserRole.REVIEWER)
+            ("Demo User", "user@example.com", "user123", UserRole.USER),
         ]
         for name, email, password, role in users_to_seed:
             get_or_create_user(db, name, email, password, role)
