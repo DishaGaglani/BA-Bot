@@ -12,7 +12,7 @@ load_dotenv()
 
 from fastapi import FastAPI, HTTPException, Depends, status, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 
@@ -155,7 +155,7 @@ async def standardize_responses_middleware(request: Request, call_next):
     # Wrap successful JSON responses
     content_type = response.headers.get("content-type", "")
     if "application/json" in content_type and response.status_code < 400:
-        if request.url.path in ["/health", "/api/mock-predict"]:
+        if request.url.path in ["/health", "/health/live", "/health/ready", "/api/mock-predict"]:
             return response
             
         # Consume the response body stream
@@ -217,26 +217,35 @@ def prometheus_metrics(request: Request):
 
 PREDICTION_URL = os.getenv("PREDICTION_URL", "https://172.16.34.7:3000/api/v1/prediction/09ee3d2d-5d65-4793-a217-abd65e837366")
 
-# Health check route
-@app.get("/health")
-def health_check(db: Session = Depends(get_db)):
-    db_ok = False
+def _check_db(db: Session) -> bool:
     try:
         from sqlalchemy import text
         db.execute(text("SELECT 1"))
-        db_ok = True
+        return True
     except Exception:
-        pass
-        
-    ai_ok = False
+        return False
+
+
+def _check_ai_service() -> bool:
     prediction_url = os.getenv("PREDICTION_URL", "https://172.16.34.7:3000/api/v1/prediction/09ee3d2d-5d65-4793-a217-abd65e837366")
     try:
         res = requests.head(prediction_url, timeout=5, verify=False)
-        if res.status_code < 500:
-            ai_ok = True
+        return res.status_code < 500
     except Exception:
-        pass
-        
+        return False
+
+
+# Health check routes. /health is the original combined check, kept for backward
+# compatibility with anything already polling it as a status page. New deployments
+# should point a liveness probe at /health/live and a readiness probe at /health/ready
+# instead: a liveness failure gets the container restarted, and restarting this process
+# fixes neither a slow database nor a third-party AI outage, so a single endpoint that
+# fails on either was causing exactly that — restart loops driven by the AI provider's
+# own availability, which a restart can't do anything about.
+@app.get("/health")
+def health_check(db: Session = Depends(get_db)):
+    db_ok = _check_db(db)
+    ai_ok = _check_ai_service()
     return {
         "status": "healthy" if (db_ok and ai_ok) else "degraded",
         "database": "connected" if db_ok else "disconnected",
@@ -245,6 +254,36 @@ def health_check(db: Session = Depends(get_db)):
         "environment": os.getenv("ENV", "development"),
         "timestamp": time.time()
     }
+
+
+@app.get("/health/live")
+def health_live():
+    """Liveness: is this process itself up and able to respond? Deliberately checks
+    nothing external — not the database, not the AI service — since a dependency being
+    down is not something restarting this process can fix."""
+    return {"status": "alive", "timestamp": time.time()}
+
+
+@app.get("/health/ready")
+def health_ready(db: Session = Depends(get_db)):
+    """Readiness: can this instance actually serve traffic right now? The database is a
+    hard requirement — almost nothing works without it — so its failure fails this
+    check (503) and an orchestrator should stop routing traffic here. The AI service is
+    reported for visibility but does not fail readiness on its own: auth, projects and
+    the admin panel all still work when only the third-party AI provider is down, so
+    pulling the instance out of rotation over that would cause more disruption than it
+    prevents."""
+    db_ok = _check_db(db)
+    ai_ok = _check_ai_service()
+    body = {
+        "status": "ready" if db_ok else "not_ready",
+        "database": "connected" if db_ok else "disconnected",
+        "aiService": "reachable" if ai_ok else "unreachable",
+        "timestamp": time.time()
+    }
+    if not db_ok:
+        return JSONResponse(status_code=503, content=body)
+    return body
 
 @app.api_route("/api/mock-predict", methods=["GET", "POST", "HEAD"])
 async def mock_predict(request: Request):

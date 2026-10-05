@@ -132,3 +132,54 @@ class TestTimestamps:
         created = make_user().created_at
         now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
         assert created.tzinfo is None and abs((now - created).total_seconds()) < 10
+
+
+# ------------------------------------------------------------------ issue 37: liveness must not restart on a third-party AI outage
+class TestHealthCheckSeparation:
+    def test_liveness_returns_200_even_if_dependency_checks_would_crash(self, client, monkeypatch):
+        """A liveness probe failing gets the container restarted; restarting this process
+        fixes neither a slow database nor a down AI provider, so /health/live must never
+        even call the functions that check them."""
+        import app as backend_app
+
+        def _boom(*a, **k):
+            raise RuntimeError("a liveness check must never run a dependency check")
+
+        monkeypatch.setattr(backend_app, "_check_db", _boom)
+        monkeypatch.setattr(backend_app, "_check_ai_service", _boom)
+
+        r = client.get("/health/live")
+        assert r.status_code == 200
+        assert r.json()["status"] == "alive"
+
+    def test_liveness_issues_no_database_queries(self, client):
+        statements = []
+        listener = lambda conn, cursor, statement, *a: statements.append(statement)
+        event.listen(engine, "before_cursor_execute", listener)
+        try:
+            r = client.get("/health/live")
+        finally:
+            event.remove(engine, "before_cursor_execute", listener)
+        assert r.status_code == 200
+        assert statements == [], f"/health/live queried the database: {statements}"
+
+    def test_readiness_reports_an_ai_outage_without_failing(self, client):
+        # The autouse _no_real_network fixture blocks the AI reachability check, which
+        # simulates exactly the third-party outage this issue is about.
+        r = client.get("/health/ready")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] == "ready" and body["aiService"] == "unreachable"
+
+    def test_readiness_fails_when_the_database_is_down(self, client, monkeypatch):
+        import app as backend_app
+
+        monkeypatch.setattr(backend_app, "_check_db", lambda db: False)
+        r = client.get("/health/ready")
+        assert r.status_code == 503
+        assert r.json()["status"] == "not_ready"
+
+    def test_combined_health_endpoint_is_unchanged_for_backward_compatibility(self, client):
+        r = client.get("/health")
+        assert r.status_code == 200
+        assert set(r.json().keys()) >= {"status", "database", "aiService"}
