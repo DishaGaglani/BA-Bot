@@ -1,6 +1,7 @@
 """LLM integration: SSE streaming, session recovery, fallback, output parsing, documents."""
 import io
 import json
+import time
 
 import docx
 import pytest
@@ -449,3 +450,64 @@ class TestExpiredSessionUnderRealConditions:
         r = client.post("/api/predict", headers=auth(owner), json={"question": "hi", "projectId": project.id})
         assert "recovered" in tokens(r)
         assert _fresh(db, project).forjinn_session_id != "session-expired"
+
+
+@pytest.mark.live
+class TestClientDisconnectDuringStreaming:
+    """issue 32: a client that disconnects mid-stream must not lose the reply."""
+
+    def test_ai_reply_and_state_are_saved_even_if_the_client_disconnects_mid_stream(
+        self, live_url, db, make_user, make_project, auth, llm
+    ):
+        # A real socket (live_url), not TestClient's in-process ASGI transport: only a
+        # genuine disconnect delivers the ASGI http.disconnect message that tears the
+        # server's generator down with GeneratorExit, which is what this guards against.
+        # httpx, not requests, to route around the _no_real_network guard the way
+        # test_concurrency.py's live-server tests already do for the same reason.
+        import httpx
+
+        class SlowStream:
+            status_code = 200
+
+            def __init__(self, lines):
+                self._lines = lines
+
+            def iter_lines(self):
+                for line in self._lines:
+                    time.sleep(0.2)
+                    yield line
+
+        owner = make_user()
+        project = make_project(owner)
+        reply_lines = [sse("token", t) for t in ["Hello ", "from ", "the ", "AI"]]
+        reply_lines.append(sse("metadata", {"chatId": "session-slow", "sessionId": "session-slow"}))
+        llm.stream_script = [SlowStream(reply_lines)]
+
+        received = 0
+        with httpx.Client(timeout=10) as c:
+            with c.stream(
+                "POST",
+                f"{live_url}/api/predict",
+                headers=auth(owner),
+                json={"question": "hi", "projectId": project.id},
+            ) as resp:
+                for _ in resp.iter_lines():
+                    received += 1
+                    if received >= 2:
+                        break
+                # Force-close the connection now, before the reply has finished streaming.
+
+        assert received < len(reply_lines), "test setup: must disconnect before the stream actually completes"
+
+        # The save happens in a BackgroundTask after Starlette notices the disconnect,
+        # not synchronously in this request, so poll briefly rather than asserting instantly.
+        deadline = time.time() + 5
+        saved = None
+        while time.time() < deadline and saved is None:
+            db.expire_all()
+            saved = db.query(Message).filter_by(project_id=project.id, role="ai").first()
+            if saved is None:
+                time.sleep(0.1)
+
+        assert saved is not None, "AI reply was never saved after a mid-stream client disconnect"
+        assert "Hello" in saved.text
