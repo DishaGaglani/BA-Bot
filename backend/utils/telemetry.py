@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+from time import perf_counter
 import json
 import logging
 import requests
@@ -53,6 +54,7 @@ def new_trace_id() -> str:
 def request_with_retry(method: str, url: str, **kwargs):
     max_retries = 3
     backoff = 1.0  # seconds
+    started = perf_counter()
     for attempt in range(1, max_retries + 1):
         try:
             if "timeout" not in kwargs:
@@ -61,10 +63,19 @@ def request_with_retry(method: str, url: str, **kwargs):
                 kwargs["timeout"] = (5, kwargs["timeout"])
             response = requests.request(method, url, **kwargs)
             response.raise_for_status()
+            response_time = (perf_counter() - started) * 1000
+            logger.info(
+                f"LLM call to {url} succeeded on attempt {attempt}/{max_retries} response_time={response_time:.2f}ms",
+                extra={"traceId": "system"}
+            )
             return response
         except (requests.exceptions.RequestException, requests.exceptions.Timeout) as exc:
             if attempt == max_retries:
-                logger.error(f"Request to {url} failed after {max_retries} attempts: {str(exc)}", extra={"traceId": "system"})
+                response_time = (perf_counter() - started) * 1000
+                logger.error(
+                    f"Request to {url} failed after {max_retries} attempts response_time={response_time:.2f}ms: {str(exc)}",
+                    extra={"traceId": "system"}
+                )
                 raise exc
             sleep_time = backoff * (2 ** (attempt - 1))
             logger.warning(
@@ -72,6 +83,30 @@ def request_with_retry(method: str, url: str, **kwargs):
                 extra={"traceId": "system"}
             )
             time.sleep(sleep_time)
+
+
+# --- Database query latency ---
+def instrument_db_latency(engine) -> None:
+    """Logs each SQL statement's wall-clock duration. Call once at startup, right after
+    the engine is created (app.py does this alongside validate_environment()). Attaching
+    the listeners more than once per engine would double-log every query, so this is not
+    meant to be called per-request."""
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+        context._telemetry_query_start = perf_counter()
+
+    @event.listens_for(engine, "after_cursor_execute")
+    def _after_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+        started = getattr(context, "_telemetry_query_start", None)
+        if started is None:
+            return
+        response_time = (perf_counter() - started) * 1000
+        # First line only: statements can be long (bulk inserts), and the operation
+        # (SELECT/INSERT/...) is what matters for a latency log line, not the full SQL.
+        first_line = statement.strip().splitlines()[0][:80]
+        logger.debug(f"DB query response_time={response_time:.2f}ms: {first_line}")
 
 # --- Environment Validation ---
 def validate_environment():

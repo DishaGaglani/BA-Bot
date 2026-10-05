@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from database import engine, SessionLocal
 from utils.migrate import run_migration
-from utils.telemetry import validate_environment, setup_global_exception_handlers, logger, request_with_retry, new_trace_id
+from utils.telemetry import validate_environment, setup_global_exception_handlers, logger, request_with_retry, new_trace_id, instrument_db_latency
 from utils.mock_llm import build_mock_response_text, generate_mock_stream_lines
 
 # Run database migrations and seed default data on startup
@@ -26,6 +26,9 @@ run_migration()
 
 # Validate environment variables on startup
 validate_environment()
+
+# Track DB query latency (logged at DEBUG; see instrument_db_latency's own docstring).
+instrument_db_latency(engine)
 
 # Import route handlers
 import auth.routes

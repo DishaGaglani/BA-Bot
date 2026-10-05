@@ -97,11 +97,10 @@ class TestAbuseProtection:
 
 # ------------------------------------------------------------------ issue 9: logging must never drop a record
 class TestLogging:
-    @pending_fix("issue 9", "the log format requires a traceId on every record, so any record without one raises inside the handler")
     def test_records_without_a_trace_id_are_still_logged(self):
         code = (
             "import sys, logging; sys.path.insert(0, sys.argv[1]);"
-            "import utils.prod_ready;"
+            "import utils.telemetry;"
             "logging.getLogger('third.party').warning('THIRD-PARTY-LINE')"
         )
         out = _python(code)
@@ -110,7 +109,7 @@ class TestLogging:
     def test_records_with_a_trace_id_keep_it(self):
         code = (
             "import sys; sys.path.insert(0, sys.argv[1]);"
-            "from utils.prod_ready import logger;"
+            "from utils.telemetry import logger;"
             "logger.info('hello', extra={'traceId': 'abc-123'})"
         )
         assert "traceId=abc-123 hello" in _python(code).stderr

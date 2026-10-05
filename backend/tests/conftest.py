@@ -322,10 +322,10 @@ def llm(monkeypatch):
     fake = FakeLLM()
     import services.fdr_summary as fdr_summary
     import services.project_state_manager as state_manager
-    import utils.prod_ready as prod_ready
+    import utils.telemetry as prod_ready
 
     # Each module binds request_with_retry by name at import; the lazy importers
-    # (summary_manager, routes.projects) read it from utils.prod_ready at call time.
+    # (summary_manager, routes.projects) read it from utils.telemetry at call time.
     for module in (backend_app, state_manager, fdr_summary, prod_ready):
         monkeypatch.setattr(module, "request_with_retry", fake)
     return fake

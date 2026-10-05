@@ -370,7 +370,7 @@ class TestExport:
 # ------------------------------------------------------------------ the real retry wrapper
 import types  # noqa: E402
 
-import utils.prod_ready as prod_ready  # noqa: E402
+import utils.telemetry as prod_ready  # noqa: E402
 
 
 class TestRequestWithRetry:
