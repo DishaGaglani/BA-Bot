@@ -14,7 +14,7 @@ from database import engine
 from services.audit import log_action
 from services.conversation_manager import save_message
 from tests.conftest import BACKEND_DIR
-from tests.helpers import pending_fix, unwrap
+from tests.helpers import unwrap
 
 
 def _python(code, env_overrides=None, *args):
@@ -77,15 +77,16 @@ class TestReadsAreSideEffectFree:
 
 # ------------------------------------------------------------------ issue 8: abuse protection
 class TestAbuseProtection:
-    @pending_fix("issue 8", "login has no rate limit, so passwords can be guessed without restriction")
     def test_repeated_failed_logins_are_throttled(self, client, make_user):
         user = make_user()
         codes = [client.post("/api/auth/login", json={"email": user.email, "password": "wrong"}).status_code for _ in range(12)]
         assert 429 in codes
 
-    @pending_fix("issue 8", "there is no request body size limit")
     def test_oversized_request_bodies_are_rejected(self, client):
-        big = {"name": "x" * (3 * 1024 * 1024), "email": "a@b.com", "password": "p"}
+        # MAX_REQUEST_BODY_BYTES defaults to 4MB (issue 8 review: 2x this app's largest
+        # legitimate payload, for header/framing headroom) — must exceed that, not the
+        # smaller ad-hoc size an earlier version of this limit used.
+        big = {"name": "x" * (5 * 1024 * 1024), "email": "a@b.com", "password": "p"}
         assert client.post("/api/auth/register", json=big).status_code == 413
 
     def test_a_normal_request_is_not_affected_by_limits(self, client, make_user, auth):
@@ -115,7 +116,6 @@ class TestLogging:
 # ------------------------------------------------------------------ issue 10: deprecated datetime.utcnow
 class TestTimestamps:
     @pytest.mark.skipif(sys.version_info < (3, 12), reason="utcnow() is only deprecated from Python 3.12")
-    @pending_fix("issue 10", "datetime.utcnow() is used throughout models, auth and services")
     def test_no_deprecated_utcnow_calls_on_common_paths(self, db, make_user, make_project):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")

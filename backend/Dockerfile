@@ -52,5 +52,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD ["python", "-c", "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/health/live' % os.getenv('PORT', '8000'), timeout=4)"]
 
 # Starts as root only long enough to fix volume ownership, then runs everything as `app`.
+# Trusting X-Forwarded-For from the frontend (so rate limiting sees real client IPs, not
+# the Nginx container's) is configured via gunicorn.conf.py's forwarded_allow_ips, not a
+# CLI flag here: gunicorn's UvicornWorker passes that setting straight through to each
+# worker's own uvicorn Config.
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["gunicorn", "-c", "gunicorn.conf.py", "app:app"]

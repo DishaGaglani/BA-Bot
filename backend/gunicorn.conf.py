@@ -83,6 +83,13 @@ workers = _int_env("WEB_CONCURRENCY", 0) or default_workers(
     max_workers=_int_env("WEB_CONCURRENCY_MAX", 4), per_worker_mb=_int_env("WORKER_MEMORY_MB", 256)
 )
 
+# Trust X-Forwarded-For from the frontend container so per-IP rate limiting
+# (utils/rate_limit.py) sees real client IPs instead of the Nginx container's. Safe here
+# because only the frontend (Nginx) container publishes a port; the backend isn't
+# directly reachable. UvicornWorker passes this gunicorn setting straight through to
+# each worker's own uvicorn Config (uvicorn's proxy_headers already defaults to True).
+forwarded_allow_ips = "*"
+
 # Async workers heartbeat from their event loop, so this is not a per-request limit: a long
 # LLM stream is fine, a wedged loop is killed.
 timeout = _int_env("GUNICORN_TIMEOUT", 120)

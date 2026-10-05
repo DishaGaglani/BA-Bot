@@ -18,7 +18,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from database import engine, SessionLocal
 from utils.migrate import run_migration
-from utils.prod_ready import validate_environment, setup_global_exception_handlers, logger, request_with_retry
+from utils.prod_ready import validate_environment, setup_global_exception_handlers, logger, request_with_retry, MAX_REQUEST_BODY_BYTES, make_error_response
+from utils.rate_limit import limiter, RATE_LIMIT_PREDICT
 from utils import metrics, observability
 from utils.mock_llm import build_mock_response_text, generate_mock_stream_lines
 
@@ -54,26 +55,11 @@ app = FastAPI(title="BA Bot API", version="1.0.0")
 # Setup global exception handlers
 setup_global_exception_handlers(app)
 
-allowed_origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:5174",
-    "http://127.0.0.1:5174",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000"
-]
+# Rate limiting (brute-force / LLM-cost / spam protection on sensitive endpoints)
+app.state.limiter = limiter
+
 frontend_url = os.getenv("FRONTEND_URL")
-if frontend_url:
-    allowed_origins.extend([origin.strip() for origin in frontend_url.split(",") if origin.strip()])
-
 is_prod = os.getenv("ENV") == "production"
-
-if is_prod:
-    if frontend_url:
-        allowed_origins = [origin.strip() for origin in frontend_url.split(",") if origin.strip()]
-    else:
-        allowed_origins = []
-        logger.warning("CORS: FRONTEND_URL environment variable is not set in production. CORS requests will be blocked.")
 
 cors_kwargs = {
     "allow_credentials": True,
@@ -84,8 +70,15 @@ cors_kwargs = {
 }
 
 if is_prod:
-    cors_kwargs["allow_origins"] = allowed_origins
+    if frontend_url:
+        cors_kwargs["allow_origins"] = [origin.strip() for origin in frontend_url.split(",") if origin.strip()]
+    else:
+        cors_kwargs["allow_origins"] = []
+        logger.warning("CORS: FRONTEND_URL environment variable is not set in production. CORS requests will be blocked.")
 else:
+    # Local dev origins aren't fixed in code either: this matches any localhost/127.0.0.1
+    # port, so it doesn't need updating whenever a dev server (Vite, CRA, etc.) picks a
+    # different port, and still doesn't hardcode a specific origin list.
     cors_kwargs["allow_origin_regex"] = r"http://(localhost|127\.0\.0\.1)(:\d+)?"
 
 app.add_middleware(
@@ -103,6 +96,20 @@ async def standardize_responses_middleware(request: Request, call_next):
     # backend logs and the exported trace share a single id.
     trace_id = observability.resolve_trace_id(request.headers)
     request.state.trace_id = trace_id
+
+    # Reject oversized bodies before they're read into memory. This checks the
+    # client-supplied Content-Length header, so it doesn't catch a request sent
+    # with chunked transfer-encoding and no Content-Length — a true streaming
+    # byte-count cap would be needed to close that gap.
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > MAX_REQUEST_BODY_BYTES:
+        return make_error_response(
+            f"Request body exceeds the {MAX_REQUEST_BODY_BYTES}-byte limit.",
+            "PAYLOAD_TOO_LARGE",
+            trace_id,
+            413
+        )
+
     observability.tag_request(trace_id)
     trace_token = observability.trace_id_var.set(trace_id)
 
@@ -311,7 +318,9 @@ class MessageRequest(BaseModel):
     sessionId: str | None = None
 
 @app.post("/api/predict")
+@limiter.limit(RATE_LIMIT_PREDICT)
 def predict(
+    request: Request,
     payload: MessageRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
