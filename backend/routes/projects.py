@@ -1,7 +1,7 @@
 import json
 import logging
 import urllib3
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session, joinedload
@@ -18,6 +18,7 @@ from dependencies.auth import (
     require_project_owner
 )
 from utils.export import parse_markdown_to_pdf
+from utils.rate_limit import limiter, RATE_LIMIT_EXPORT
 from services.project_state_manager import get_legacy_payload, get_structured_state, DEFAULT_STATE
 
 logger = logging.getLogger("ba-bot")
@@ -242,7 +243,9 @@ def delete_project(
     return {"status": "deleted"}
 
 @router.get("/{project_id}/export")
+@limiter.limit(RATE_LIMIT_EXPORT)
 def export_project(
+    request: Request,
     project_id: int,
     format: str,
     project: Project = Depends(require_project_access(ProjectMemberRole.VIEWER)),
