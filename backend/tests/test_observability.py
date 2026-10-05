@@ -447,14 +447,22 @@ class TestLlmMetrics:
     def test_successful_call_records_outcome_latency_and_tokens(self, monkeypatch):
         from utils.prod_ready import request_with_retry
 
-        monkeypatch.setattr(requests, "request", lambda *a, **k: FakeResponse(200, json_body={"text": "y" * 400}, text="y" * 400))
+        def _slow_request(*a, **k):
+            time.sleep(0.05)
+            return FakeResponse(200, json_body={"text": "y" * 400}, text="y" * 400)
+
+        monkeypatch.setattr(requests, "request", _slow_request)
         ok = sample("ba_llm_requests_total", operation="completion", outcome="success")
         tin = sample("ba_llm_tokens_total", operation="completion", direction="input")
         tout = sample("ba_llm_tokens_total", operation="completion", direction="output")
+        done = sample("ba_llm_request_duration_seconds_count", operation="completion")
+        elapsed = sample("ba_llm_request_duration_seconds_sum", operation="completion")
         request_with_retry("POST", "http://llm.local/x", json={"question": "q" * 80, "streaming": False})
         assert sample("ba_llm_requests_total", operation="completion", outcome="success") == ok + 1
         assert sample("ba_llm_tokens_total", operation="completion", direction="input") == tin + 20
         assert sample("ba_llm_tokens_total", operation="completion", direction="output") == tout + 100
+        assert sample("ba_llm_request_duration_seconds_count", operation="completion") == done + 1
+        assert sample("ba_llm_request_duration_seconds_sum", operation="completion") >= elapsed + 0.05
 
     def test_failures_count_retries_then_an_error_outcome(self, monkeypatch):
         from utils import prod_ready
@@ -502,6 +510,33 @@ class TestLlmMetrics:
             pass
         assert sample("ba_llm_requests_total", operation="chat_stream", outcome="error") == before + 1
         assert sample("ba_chat_streams_active") == 0
+
+
+class TestDbMetrics:
+    def test_a_select_query_records_latency_under_the_select_operation_label(self, db, make_user):
+        from models import User
+
+        make_user()
+        done = sample("ba_db_query_duration_seconds_count", operation="select")
+        elapsed = sample("ba_db_query_duration_seconds_sum", operation="select")
+        db.query(User).all()
+        assert sample("ba_db_query_duration_seconds_count", operation="select") == done + 1
+        assert sample("ba_db_query_duration_seconds_sum", operation="select") >= elapsed
+
+    def test_an_insert_is_labelled_separately_from_a_select(self, db):
+        from models import User
+
+        inserted = sample("ba_db_query_duration_seconds_count", operation="insert")
+        db.add(User(name="u", email="dbmetrics@test.com", password_hash="x"))
+        db.commit()
+        assert sample("ba_db_query_duration_seconds_count", operation="insert") == inserted + 1
+
+    def test_an_ordinary_authenticated_request_records_db_latency(self, client, auth, make_user):
+        user = make_user()
+        done = sample("ba_db_query_duration_seconds_count", operation="select")
+        r = client.get("/api/auth/me", headers=auth(user))
+        assert r.status_code == 200
+        assert sample("ba_db_query_duration_seconds_count", operation="select") > done
 
 
 class TestTaskMetrics:
