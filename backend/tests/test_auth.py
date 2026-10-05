@@ -44,17 +44,17 @@ class TestRegistration:
     def test_creates_account_with_default_role(self, client, db):
         r = _register(client)
         assert r.status_code == 200
-        assert unwrap(r)["role"] == "BUSINESS_ANALYST"
-        assert db.query(User).filter_by(email="new@test.com").one().role == UserRole.BUSINESS_ANALYST
+        assert unwrap(r)["role"] == "USER"
+        assert db.query(User).filter_by(email="new@test.com").one().role == UserRole.USER
 
-    @pytest.mark.parametrize("role", ["SUPER_ADMIN", "ADMIN", "REVIEWER", "PROJECT_MANAGER"])
-    def test_cannot_self_assign_privileged_role(self, client, db, role):
+    def test_cannot_self_assign_privileged_role(self, client, db):
+        role = "ADMIN"
         r = _register(client, email=f"{role.lower()}@test.com", role=role)
         # Either rejecting the request or ignoring the field is acceptable;
         # what is never acceptable is creating the account with that role.
         if r.status_code == 200:
             user = db.query(User).filter_by(email=f"{role.lower()}@test.com").one()
-            assert user.role == UserRole.BUSINESS_ANALYST
+            assert user.role == UserRole.USER
         else:
             assert 400 <= r.status_code < 500
 
@@ -100,19 +100,19 @@ class TestLogin:
         return client.post("/api/auth/login", json={"email": email, "password": password})
 
     def test_success_returns_token_and_public_profile(self, client, make_user):
-        user = make_user(UserRole.PROJECT_MANAGER)
+        user = make_user(UserRole.ADMIN)
         r = self._login(client, user.email)
         assert r.status_code == 200
         data = unwrap(r)
         assert data["token_type"] == "bearer"
         assert data["user"]["email"] == user.email
-        assert data["user"]["role"] == "PROJECT_MANAGER"
+        assert data["user"]["role"] == "ADMIN"
         assert "password" not in json.dumps(data).lower()
 
     def test_issued_token_carries_identity_claims(self, client, make_user):
         user = make_user()
         claims = decode_access_token(unwrap(self._login(client, user.email))["access_token"])
-        assert claims["sub"] == user.email and claims["uid"] == user.id and claims["role"] == "BUSINESS_ANALYST"
+        assert claims["sub"] == user.email and claims["uid"] == user.id and claims["role"] == "USER"
 
     def test_updates_last_login(self, client, db, make_user):
         user = make_user()
@@ -176,9 +176,9 @@ class TestJwtTokens:
         assert decode_access_token(_token({"sub": "a"}, secret=OLD_PUBLIC_DEFAULT_SECRET)) is None
 
     def test_tampered_payload_rejected(self):
-        header, _, signature = _token({"sub": "a", "role": "BUSINESS_ANALYST"}).split(".")
+        header, _, signature = _token({"sub": "a", "role": "USER"}).split(".")
         forged = base64.urlsafe_b64encode(
-            json.dumps({"sub": "a", "role": "SUPER_ADMIN", "exp": int(time.time()) + 3600}).encode()
+            json.dumps({"sub": "a", "role": "ADMIN", "exp": int(time.time()) + 3600}).encode()
         ).rstrip(b"=").decode()
         assert decode_access_token(f"{header}.{forged}.{signature}") is None
 
@@ -238,8 +238,8 @@ class TestTokenEnforcementOnRoutes:
 
     def test_role_claim_in_token_is_not_trusted(self, client, make_user):
         """Authorization must use the role stored in the database, not the token's claim."""
-        user = make_user(UserRole.BUSINESS_ANALYST)
-        forged = _token({"sub": user.email, "role": "SUPER_ADMIN", "uid": user.id})
+        user = make_user(UserRole.USER)
+        forged = _token({"sub": user.email, "role": "ADMIN", "uid": user.id})
         r = client.get("/api/admin/users", headers={"Authorization": f"Bearer {forged}"})
         assert r.status_code == 403
 

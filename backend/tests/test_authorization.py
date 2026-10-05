@@ -5,11 +5,11 @@ import pytest
 from fastapi.routing import APIRoute
 
 import app as backend_app
-from models import AuditLog, Project, ProjectMember, ProjectMemberRole, Team, TeamProject, UserRole
+from models import AuditLog, Project, ProjectMember, ProjectMemberRole, UserRole
 from tests.helpers import project_payload, unwrap
 
-NON_ADMIN_ROLES = [UserRole.BUSINESS_ANALYST, UserRole.PROJECT_MANAGER, UserRole.VIEWER, UserRole.REVIEWER]
-ADMIN_ROLES = [UserRole.ADMIN, UserRole.SUPER_ADMIN]
+NON_ADMIN_ROLES = [UserRole.USER]
+ADMIN_ROLES = [UserRole.ADMIN]
 MISSING = 999999
 
 
@@ -59,22 +59,22 @@ class TestAdminRouteAccess:
 
     def test_admin_cannot_change_own_role(self, client, make_user, auth):
         admin = make_user(UserRole.ADMIN)
-        r = client.put(f"/api/admin/users/{admin.id}/role", headers=auth(admin), json={"role": "BUSINESS_ANALYST"})
+        r = client.put(f"/api/admin/users/{admin.id}/role", headers=auth(admin), json={"role": "USER"})
         assert r.status_code == 400
 
     def test_non_admin_cannot_promote_themselves(self, client, db, make_user, auth):
-        user = make_user(UserRole.BUSINESS_ANALYST)
-        r = client.put(f"/api/admin/users/{user.id}/role", headers=auth(user), json={"role": "SUPER_ADMIN"})
+        user = make_user(UserRole.USER)
+        r = client.put(f"/api/admin/users/{user.id}/role", headers=auth(user), json={"role": "ADMIN"})
         assert r.status_code == 403
         db.expire_all()
-        assert db.get(type(user), user.id).role == UserRole.BUSINESS_ANALYST
+        assert db.get(type(user), user.id).role == UserRole.USER
 
     def test_admin_can_change_another_users_role_and_it_is_audited(self, client, db, make_user, auth):
-        admin, target = make_user(UserRole.ADMIN), make_user(UserRole.VIEWER)
-        r = client.put(f"/api/admin/users/{target.id}/role", headers=auth(admin), json={"role": "REVIEWER"})
+        admin, target = make_user(UserRole.ADMIN), make_user(UserRole.USER)
+        r = client.put(f"/api/admin/users/{target.id}/role", headers=auth(admin), json={"role": "ADMIN"})
         assert r.status_code == 200
         db.expire_all()
-        assert db.get(type(target), target.id).role == UserRole.REVIEWER
+        assert db.get(type(target), target.id).role == UserRole.ADMIN
         assert db.query(AuditLog).filter_by(action="user role updated").count() == 1
 
 
@@ -85,7 +85,6 @@ PROJECT_ENDPOINTS = [
     ("DELETE", "", None),
     ("GET", "/export?format=docx", None),
     ("GET", "/export?format=pdf", None),
-    ("POST", "/submit", None),
     ("POST", "/publish", None),
     ("POST", "/invite", {"email": "someone@test.com", "role": "VIEWER"}),
     ("GET", "/members", None),
@@ -123,7 +122,7 @@ class TestObjectLevelIsolation:
         _, stranger, project = world
         headers = auth(stranger)
         client.put(f"/api/projects/{project.id}", headers=headers, json=project_payload("HIJACKED"))
-        client.post(f"/api/projects/{project.id}/submit", headers=headers)
+        client.post(f"/api/projects/{project.id}/publish", headers=headers)
         client.delete(f"/api/projects/{project.id}", headers=headers)
         db.expire_all()
         still_there = db.get(Project, project.id)
@@ -166,7 +165,7 @@ class TestObjectLevelIsolation:
 
 # ------------------------------------------------------------------ project roles
 class TestProjectRoleHierarchy:
-    """VIEWER < CONTRIBUTOR < BUSINESS_ANALYST < PROJECT_MANAGER, each checked per action."""
+    """VIEWER (read-only) < MEMBER (read + edit), each checked per action."""
 
     @pytest.fixture
     def project_with_members(self, make_user, make_project, add_member):
@@ -183,9 +182,7 @@ class TestProjectRoleHierarchy:
         "role,can_read,can_edit",
         [
             (ProjectMemberRole.VIEWER, True, False),
-            (ProjectMemberRole.CONTRIBUTOR, True, True),
-            (ProjectMemberRole.BUSINESS_ANALYST, True, True),
-            (ProjectMemberRole.PROJECT_MANAGER, True, True),
+            (ProjectMemberRole.MEMBER, True, True),
         ],
     )
     def test_read_and_edit_permissions(self, client, auth, project_with_members, role, can_read, can_edit):
@@ -193,7 +190,6 @@ class TestProjectRoleHierarchy:
         headers = auth(members[role])
         assert (client.get(f"/api/projects/{project.id}", headers=headers).status_code == 200) is can_read
         assert (client.put(f"/api/projects/{project.id}", headers=headers, json=project_payload()).status_code == 200) is can_edit
-        assert (client.post(f"/api/projects/{project.id}/submit", headers=headers).status_code == 200) is can_edit
 
     @pytest.mark.parametrize("role", list(ProjectMemberRole))
     def test_only_the_owner_can_delete_or_invite(self, client, auth, project_with_members, role):
@@ -203,102 +199,48 @@ class TestProjectRoleHierarchy:
         r = client.post(f"/api/projects/{project.id}/invite", headers=headers, json={"email": "x@test.com", "role": "VIEWER"})
         assert r.status_code == 403
 
-    def test_publishing_needs_project_manager_role(self, client, auth, db, project_with_members):
+    def test_publishing_needs_member_role(self, client, auth, project_with_members):
         project, members, _ = project_with_members
-        project.status = "APPROVED"
-        db.commit()
-        for role in (ProjectMemberRole.VIEWER, ProjectMemberRole.CONTRIBUTOR, ProjectMemberRole.BUSINESS_ANALYST):
-            assert client.post(f"/api/projects/{project.id}/publish", headers=auth(members[role])).status_code == 403
-        assert client.post(f"/api/projects/{project.id}/publish", headers=auth(members[ProjectMemberRole.PROJECT_MANAGER])).status_code == 200
-
-    def test_team_membership_grants_access_to_team_projects(self, client, auth, db, make_user, make_project):
-        owner = make_user()
-        project = make_project(owner)
-        team = Team(name="Analysts")
-        db.add(team)
-        db.commit()
-        outsider, teammate = make_user(), make_user(team_id=team.id)
-        db.add(TeamProject(team_id=team.id, project_id=project.id))
-        db.commit()
-        assert client.get(f"/api/projects/{project.id}", headers=auth(outsider)).status_code == 403
-        assert client.get(f"/api/projects/{project.id}", headers=auth(teammate)).status_code == 200
-        assert project.id in {p["id"] for p in unwrap(client.get("/api/projects", headers=auth(teammate)))}
-
-    def test_team_manager_can_publish_but_not_delete(self, client, auth, db, make_user, make_project):
-        project = make_project(make_user(), status="APPROVED")
-        manager = make_user()
-        team = Team(name="Managers", manager_id=manager.id)
-        db.add(team)
-        db.commit()
-        manager.team_id = team.id
-        db.add(TeamProject(team_id=team.id, project_id=project.id))
-        db.commit()
-        assert client.delete(f"/api/projects/{project.id}", headers=auth(manager)).status_code == 403
-        assert client.post(f"/api/projects/{project.id}/publish", headers=auth(manager)).status_code == 200
+        assert client.post(f"/api/projects/{project.id}/publish", headers=auth(members[ProjectMemberRole.VIEWER])).status_code == 403
+        assert client.post(f"/api/projects/{project.id}/publish", headers=auth(members[ProjectMemberRole.MEMBER])).status_code == 200
 
 
 # ------------------------------------------------------------------ creation & workflow
 class TestCreationAndWorkflow:
-    @pytest.mark.parametrize(
-        "role,allowed",
-        [
-            (UserRole.SUPER_ADMIN, True),
-            (UserRole.ADMIN, True),
-            (UserRole.BUSINESS_ANALYST, True),
-            (UserRole.PROJECT_MANAGER, True),
-            (UserRole.REVIEWER, True),
-            (UserRole.VIEWER, False),
-        ],
-    )
-    def test_who_can_create_projects(self, client, db, make_user, auth, role, allowed):
+    @pytest.mark.parametrize("role", [UserRole.ADMIN, UserRole.USER])
+    def test_any_account_type_can_create_projects(self, client, db, make_user, auth, role):
+        # No role gate on project creation: both account types may start one.
         user = make_user(role)
         r = client.post("/api/projects", headers=auth(user), json=project_payload("Created"))
-        assert (r.status_code == 200) is allowed
-        assert db.query(Project).count() == (1 if allowed else 0)
-        if not allowed:
-            assert r.status_code == 403
-            assert db.query(AuditLog).filter_by(action="permission denied").count() == 1
+        assert r.status_code == 200
+        assert db.query(Project).count() == 1
 
-    def test_creator_becomes_owner_and_project_manager(self, client, db, make_user, auth):
+    def test_creator_becomes_owner_and_member(self, client, db, make_user, auth):
         user = make_user()
         project_id = unwrap(client.post("/api/projects", headers=auth(user), json=project_payload("Mine")))["id"]
         project = db.get(Project, project_id)
         assert project.owner_id == user.id and project.status == "DRAFT" and project.session_id
         member = db.query(ProjectMember).filter_by(project_id=project_id, user_id=user.id).one()
-        assert member.role == ProjectMemberRole.PROJECT_MANAGER
+        assert member.role == ProjectMemberRole.MEMBER
 
-    def test_full_approval_workflow(self, client, db, make_user, make_project, auth):
-        owner, reviewer = make_user(UserRole.PROJECT_MANAGER), make_user(UserRole.REVIEWER)
+    def test_publish_workflow_goes_straight_from_draft_to_published(self, client, db, make_user, make_project, auth):
+        # No review/approval stage: any MEMBER (or the owner, or an admin) can publish directly.
+        owner = make_user()
         project = make_project(owner)
-        h_owner, h_reviewer = auth(owner), auth(reviewer)
+        headers = auth(owner)
 
-        assert client.post(f"/api/projects/{project.id}/publish", headers=h_owner).status_code == 400  # not approved yet
-        assert unwrap(client.post(f"/api/projects/{project.id}/submit", headers=h_owner))["new_status"] == "PENDING_REVIEW"
-        assert client.post(f"/api/projects/{project.id}/review", headers=h_owner, json={"approved": True}).status_code == 403
-        assert unwrap(client.post(f"/api/projects/{project.id}/review", headers=h_reviewer, json={"approved": False}))["new_status"] == "DRAFT"
-        client.post(f"/api/projects/{project.id}/submit", headers=h_owner)
-        assert unwrap(client.post(f"/api/projects/{project.id}/review", headers=h_reviewer, json={"approved": True}))["new_status"] == "APPROVED"
-        assert unwrap(client.post(f"/api/projects/{project.id}/publish", headers=h_owner))["new_status"] == "PUBLISHED"
+        assert unwrap(client.post(f"/api/projects/{project.id}/publish", headers=headers))["new_status"] == "PUBLISHED"
+        assert client.post(f"/api/projects/{project.id}/publish", headers=headers).status_code == 400  # already published
 
         db.expire_all()
         assert db.get(Project, project.id).locked is True
-        actions = {a.action for a in db.query(AuditLog).all()}
-        assert {"project submission", "document approval", "document rejection", "project publish"} <= actions
-
-    @pytest.mark.parametrize("role", [UserRole.BUSINESS_ANALYST, UserRole.PROJECT_MANAGER, UserRole.VIEWER])
-    def test_only_reviewers_and_admins_can_approve(self, client, make_user, make_project, auth, role):
-        """Even the project's own owner cannot approve their own work."""
-        user = make_user(role)
-        project = make_project(user, status="PENDING_REVIEW")
-        r = client.post(f"/api/projects/{project.id}/review", headers=auth(user), json={"approved": True})
-        assert r.status_code == 403
+        assert db.query(AuditLog).filter_by(action="project publish").count() == 1
 
     def test_published_project_is_locked_against_changes(self, client, db, make_user, make_project, auth, llm):
         owner = make_user()
         project = make_project(owner, status="PUBLISHED", locked=True)
         headers = auth(owner)
         assert client.put(f"/api/projects/{project.id}", headers=headers, json=project_payload("Edit")).status_code == 403
-        assert client.post(f"/api/projects/{project.id}/submit", headers=headers).status_code == 403
         assert client.post("/api/predict", headers=headers, json={"question": "hi", "projectId": project.id}).status_code == 403
         assert client.get(f"/api/projects/{project.id}", headers=headers).status_code == 200  # still readable
         assert llm.calls == []
@@ -318,9 +260,9 @@ class TestInvitations:
         project = make_project(owner)
         url = f"/api/projects/{project.id}/invite"
         assert client.post(url, headers=auth(owner), json={"email": guest.email, "role": "VIEWER"}).status_code == 200
-        assert client.post(url, headers=auth(owner), json={"email": guest.email, "role": "CONTRIBUTOR"}).status_code == 200
+        assert client.post(url, headers=auth(owner), json={"email": guest.email, "role": "MEMBER"}).status_code == 200
         rows = db.query(ProjectMember).filter_by(project_id=project.id, user_id=guest.id).all()
-        assert len(rows) == 1 and rows[0].role == ProjectMemberRole.CONTRIBUTOR
+        assert len(rows) == 1 and rows[0].role == ProjectMemberRole.MEMBER
 
     def test_unknown_user_and_invalid_role(self, client, make_user, make_project, auth):
         owner = make_user()
@@ -340,6 +282,6 @@ class TestInvitations:
     def test_members_endpoint_lists_roles(self, client, make_user, make_project, add_member, auth):
         owner, guest = make_user(), make_user()
         project = make_project(owner)
-        add_member(project, guest, ProjectMemberRole.CONTRIBUTOR)
+        add_member(project, guest, ProjectMemberRole.MEMBER)
         members = {m["email"]: m["role"] for m in unwrap(client.get(f"/api/projects/{project.id}/members", headers=auth(owner)))}
-        assert members == {owner.email: "PROJECT_MANAGER", guest.email: "CONTRIBUTOR"}
+        assert members == {owner.email: "MEMBER", guest.email: "MEMBER"}

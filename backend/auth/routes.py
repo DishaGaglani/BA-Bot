@@ -19,6 +19,8 @@ class UserRegisterRequest(BaseModel):
     name: str
     email: EmailStr
     password: str
+    # No role field: self-registration always creates a regular USER account. Only an
+    # existing admin can promote an account to ADMIN, via the admin panel.
 
 class UserLoginRequest(BaseModel):
     email: EmailStr
@@ -71,7 +73,7 @@ def register(request: Request, response: Response, payload: UserRegisterRequest,
         name=payload.name,
         email=payload.email,
         password_hash=pwd_hash,
-        role=UserRole.BUSINESS_ANALYST
+        role=UserRole.USER
     )
     db.add(new_user)
     try:

@@ -13,8 +13,6 @@ from models import (
     Project,
     ProjectMember,
     ProjectMemberRole,
-    Team,
-    TeamProject,
     User,
     UserRole,
 )
@@ -32,7 +30,7 @@ class TestRelationships:
     def test_project_graph_is_navigable_in_both_directions(self, db, make_user, make_project, add_member):
         owner, guest = make_user(), make_user()
         project = make_project(owner)
-        add_member(project, guest, ProjectMemberRole.CONTRIBUTOR)
+        add_member(project, guest, ProjectMemberRole.MEMBER)
         message = save_message(db, project.id, "user", "hello")
         db.expire_all()
 
@@ -43,24 +41,6 @@ class TestRelationships:
         assert [m.project_id for m in db.get(User, guest.id).memberships] == [project.id]
         assert [m.id for m in project.messages] == [message.id]
         assert db.get(Message, message.id).project.id == project.id
-
-    def test_team_relationships(self, db, make_user, make_project):
-        manager = make_user()
-        team = Team(name="Team A", manager_id=manager.id)
-        db.add(team)
-        db.commit()
-        member = make_user(team_id=team.id)
-        project = make_project(manager)
-        db.add(TeamProject(team_id=team.id, project_id=project.id))
-        db.commit()
-        db.expire_all()
-
-        team = db.get(Team, team.id)
-        assert team.manager.id == manager.id
-        assert [u.id for u in team.members] == [member.id]
-        assert [tp.project_id for tp in team.projects] == [project.id]
-        assert db.get(User, member.id).team.id == team.id
-        assert [tp.team_id for tp in db.get(Project, project.id).teams] == [team.id]
 
 
 # ------------------------------------------------------------------ cascading deletes
@@ -73,12 +53,7 @@ class TestCascadingDeletion:
         for i in range(3):
             save_message(db, project.id, "user", f"msg {i}")
         log_action(db, owner.id, "something", project_id=project.id)
-        team = Team(name="T")
-        db.add(team)
-        db.commit()
-        db.add(TeamProject(team_id=team.id, project_id=project.id))
-        db.commit()
-        return owner, guest, project, team
+        return owner, guest, project
 
     def _counts(self, db, project_id):
         db.expire_all()
@@ -86,35 +61,34 @@ class TestCascadingDeletion:
             "members": db.query(ProjectMember).filter_by(project_id=project_id).count(),
             "messages": db.query(Message).filter_by(project_id=project_id).count(),
             "audit": db.query(AuditLog).filter_by(project_id=project_id, action="something").count(),
-            "team_links": db.query(TeamProject).filter_by(project_id=project_id).count(),
         }
 
     def test_deleting_a_project_removes_everything_that_belongs_to_it(self, db, populated):
-        _, _, project, _ = populated
-        assert self._counts(db, project.id) == {"members": 2, "messages": 3, "audit": 1, "team_links": 1}
+        _, _, project = populated
+        assert self._counts(db, project.id) == {"members": 2, "messages": 3, "audit": 1}
         db.delete(db.get(Project, project.id))
         db.commit()
         assert db.get(Project, project.id) is None
-        assert self._counts(db, project.id) == {"members": 0, "messages": 0, "audit": 0, "team_links": 0}
+        assert self._counts(db, project.id) == {"members": 0, "messages": 0, "audit": 0}
 
-    def test_deleting_a_project_leaves_users_and_teams_alone(self, db, populated):
-        owner, guest, project, team = populated
+    def test_deleting_a_project_leaves_users_alone(self, db, populated):
+        owner, guest, project = populated
         db.delete(db.get(Project, project.id))
         db.commit()
         db.expire_all()
-        assert db.get(User, owner.id) and db.get(User, guest.id) and db.get(Team, team.id)
+        assert db.get(User, owner.id) and db.get(User, guest.id)
 
     def test_delete_endpoint_cascades_and_leaves_other_projects_intact(self, client, db, auth, populated, make_project):
-        owner, _, project, _ = populated
+        owner, _, project = populated
         bystander = make_project(owner, "other")
         save_message(db, bystander.id, "user", "keep me")
         assert client.delete(f"/api/projects/{project.id}", headers=auth(owner)).status_code == 200
-        assert self._counts(db, project.id) == {"members": 0, "messages": 0, "audit": 0, "team_links": 0}
+        assert self._counts(db, project.id) == {"members": 0, "messages": 0, "audit": 0}
         assert db.query(Message).filter_by(project_id=bystander.id).count() == 1
         assert db.query(ProjectMember).filter_by(project_id=bystander.id).count() == 1
 
     def test_deleting_a_project_is_audited(self, client, db, auth, populated):
-        owner, _, project, _ = populated
+        owner, _, project = populated
         client.delete(f"/api/projects/{project.id}", headers=auth(owner))
         assert db.query(AuditLog).filter_by(action="project deletion").count() == 1
 
@@ -131,13 +105,6 @@ class TestConstraints:
         owner = make_user()
         first = make_project(owner, session_id="session-shared")
         db.add(Project(owner_id=owner.id, name="dup", session_id=first.session_id))
-        with pytest.raises(IntegrityError):
-            db.commit()
-
-    def test_team_name_is_unique(self, db):
-        db.add(Team(name="Same"))
-        db.commit()
-        db.add(Team(name="Same"))
         with pytest.raises(IntegrityError):
             db.commit()
 
@@ -180,7 +147,7 @@ class TestDefaults:
         db.add(user)
         db.commit()
         db.refresh(user)
-        assert (user.role, user.status, user.department) == (UserRole.BUSINESS_ANALYST, "ACTIVE", "IT")
+        assert (user.role, user.status, user.department) == (UserRole.USER, "ACTIVE", "IT")
         assert abs((_now() - user.created_at).total_seconds()) < 10
 
     def test_project_defaults(self, db, make_user):

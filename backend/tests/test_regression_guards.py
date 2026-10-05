@@ -95,7 +95,6 @@ class TestAbuseProtection:
 
 # ------------------------------------------------------------------ issue 9: logging must never drop a record
 class TestLogging:
-    @pending_fix("issue 9", "the log format requires a traceId on every record, so any record without one raises inside the handler")
     def test_records_without_a_trace_id_are_still_logged(self):
         code = (
             "import sys, logging; sys.path.insert(0, sys.argv[1]);"
