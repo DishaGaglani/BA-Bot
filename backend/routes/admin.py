@@ -709,7 +709,7 @@ def transfer_admin_project_ownership(
             ProjectMember.user_id == payload.owner_id
         ).first()
         if existing:
-            existing.role = ProjectMemberRole.PROJECT_MANAGER
+            existing.role = ProjectMemberRole.MEMBER
         db.commit()
 
     from services.audit import log_action

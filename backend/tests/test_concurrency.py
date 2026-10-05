@@ -10,7 +10,7 @@ import time
 import httpx
 import pytest
 
-from models import Message, Project, ProjectMember, User
+from models import Message, Project, ProjectMember, ProjectMemberRole, User, UserRole
 from tests.helpers import pending_fix, project_payload
 
 pytestmark = pytest.mark.live
@@ -136,11 +136,6 @@ class TestConcurrentWrites:
         responses = _run_parallel(5, lambda i: _post(f"{live_url}/api/auth/register", {}, body))
         assert {r.status_code for r in responses} <= {200, 400}
 
-    @pytest.mark.xfail(
-        strict=False,
-        reason="[issue 6] duplicate memberships can appear when invites race (no unique constraint); "
-        "timing dependent, so this is non-strict",
-    )
     def test_racing_invites_produce_one_membership_and_no_errors(self, live_url, db, make_user, make_project, auth):
         owner, guest = make_user(), make_user()
         project = make_project(owner)
@@ -149,6 +144,35 @@ class TestConcurrentWrites:
         assert all(r.status_code == 200 for r in responses), [r.status_code for r in responses]
         db.expire_all()
         assert db.query(ProjectMember).filter_by(project_id=project_id, user_id=guest_id).count() == 1
+
+    def test_racing_ownership_transfers_to_the_same_new_owner_leave_one_membership(
+        self, live_url, db, make_user, make_project, auth
+    ):
+        """admin.py's transfer-ownership retry path (the branch taken when the unique
+        constraint catches a concurrent request inserting the same membership row first)
+        used to set ProjectMemberRole.PROJECT_MANAGER, a role removed by the simplified
+        MEMBER/VIEWER model — that crashed the retry with an AttributeError."""
+        admin = make_user(UserRole.ADMIN)
+        owner = make_user()
+        new_owner = make_user()
+        project = make_project(owner)
+        headers, project_id, new_owner_id = auth(admin), project.id, new_owner.id
+
+        def transfer(i):
+            with httpx.Client(timeout=30) as c:
+                return c.put(
+                    f"{live_url}/api/admin/projects/{project_id}/transfer-ownership",
+                    headers=headers,
+                    json={"owner_id": new_owner_id},
+                )
+
+        responses = _run_parallel(5, transfer)
+        assert all(r.status_code == 200 for r in responses), [r.status_code for r in responses]
+        db.expire_all()
+        assert db.get(Project, project_id).owner_id == new_owner_id
+        rows = db.query(ProjectMember).filter_by(project_id=project_id, user_id=new_owner_id).all()
+        assert len(rows) == 1
+        assert rows[0].role == ProjectMemberRole.MEMBER
 
     def test_racing_edits_leave_the_project_internally_consistent(self, live_url, db, make_user, make_project, auth):
         owner = make_user()
