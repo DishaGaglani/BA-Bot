@@ -1,11 +1,14 @@
 import json
-import datetime
+import logging
 from sqlalchemy.orm import Session
 import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models import AuditLog
+from database import utcnow
+
+logger = logging.getLogger("ba-bot")
 
 def log_action(
     db: Session,
@@ -21,7 +24,7 @@ def log_action(
         user_id=user_id,
         action=action,
         project_id=project_id,
-        timestamp=datetime.datetime.utcnow(),
+        timestamp=utcnow(),
         metadata_json=metadata_str
     )
     db.add(db_log)
@@ -31,5 +34,5 @@ def log_action(
     except Exception as e:
         db.rollback()
         # In case of logging failure, print or ignore, but do not block app flows
-        print(f"Failed to log audit event '{action}': {str(e)}")
+        logger.error(f"Failed to log audit event '{action}': {str(e)}", exc_info=True)
     return db_log

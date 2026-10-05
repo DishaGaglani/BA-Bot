@@ -8,20 +8,20 @@ import AdminPortal from './admin/AdminPortal'
 // The sign-in screen is skipped: the app silently authenticates as this account on
 // load instead of requiring a manual login. Change these to switch which account
 // the whole app runs as; the login form itself is left intact as a fallback below.
-// Deliberately not the admin account: logging in as ADMIN/SUPER_ADMIN auto-routes to
-// the admin panel, which has its own separate (currently unfixed) response-unwrapping
-// bug in its sub-components — see the unwrapApiResponse note in config.ts.
-const AUTO_LOGIN_EMAIL = 'ba@example.com'
-const AUTO_LOGIN_PASSWORD = 'ba123'
+// Deliberately not the admin account: logging in as ADMIN auto-routes to the admin
+// panel, which has its own separate (currently unfixed) response-unwrapping bug in
+// its sub-components — see the unwrapApiResponse note in config.ts.
+const AUTO_LOGIN_EMAIL = 'user@example.com'
+const AUTO_LOGIN_PASSWORD = 'user123'
 
 type PageView = 'dashboard' | 'new-project' | 'interview' | 'review' | 'export' | 'admin'
 type MessageRole = 'ai' | 'user'
 type UpdateSection = 'project' | 'overview' | 'discovery'
 
-// User Roles
-type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'BUSINESS_ANALYST' | 'PROJECT_MANAGER' | 'VIEWER' | 'REVIEWER' | 'CLIENT'
-// Project Member Roles
-type ProjectMemberRole = 'OWNER' | 'EDITOR' | 'VIEWER'
+// Account-wide role. ADMIN can see/manage everything; USER is everyone else.
+type UserRole = 'ADMIN' | 'USER'
+// Per-project role: MEMBER can chat with the bot and edit; VIEWER can only read.
+type ProjectMemberRole = 'MEMBER' | 'VIEWER'
 
 interface User {
   id: number
@@ -47,7 +47,7 @@ interface Requirement {
 interface ProjectData {
   id?: number
   owner_id?: number
-  status?: string // 'DRAFT' | 'PENDING_REVIEW' | 'APPROVED' | 'PUBLISHED'
+  status?: string // 'DRAFT' | 'PUBLISHED'
   sessionId?: string | null
   pdfGenerated?: boolean
   messages?: Message[]
@@ -375,13 +375,12 @@ function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   
   // Auth Form State
-  const [authTab, setAuthTab] = useState<'login' | 'register' | 'admin' | 'admin_register'>('login')
+  const [authTab, setAuthTab] = useState<'login' | 'register' | 'admin'>('login')
   const [loginEmail, setLoginEmail] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
   const [regName, setRegName] = useState('')
   const [regEmail, setRegEmail] = useState('')
   const [regPassword, setRegPassword] = useState('')
-  const [regRole, setRegRole] = useState<UserRole>('BUSINESS_ANALYST')
   const [authError, setAuthError] = useState('')
 
   const [activePage, setActivePage] = useState<PageView>('dashboard')
@@ -401,10 +400,7 @@ function App() {
   // Project Members lists
   const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
   const [inviteEmail, setInviteEmail] = useState('')
-  const [inviteRole, setInviteRole] = useState<ProjectMemberRole>('EDITOR')
-  
-  // Feedback from Reviewer
-  const [reviewerFeedback, setReviewerFeedback] = useState('')
+  const [inviteRole, setInviteRole] = useState<ProjectMemberRole>('MEMBER')
 
   // Workspace tab & details state
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<'details' | 'overview' | 'discovery' | 'requirements' | 'members'>('details')
@@ -449,15 +445,6 @@ function App() {
     })
   }
 
-  // Admin panel state
-  const [adminTab, setAdminTab] = useState<'users' | 'logs'>('users')
-  const [usersList, setUsersList] = useState<any[]>([])
-  const [logsList, setLogsList] = useState<any[]>([])
-  const [adminNewName, setAdminNewName] = useState('')
-  const [adminNewEmail, setAdminNewEmail] = useState('')
-  const [adminNewPassword, setAdminNewPassword] = useState('')
-  const [adminNewRole, setAdminNewRole] = useState<UserRole>('BUSINESS_ANALYST')
-
   const messageListRef = useRef<HTMLDivElement | null>(null)
 
   const chatMessages = projectData.messages || initialMessages
@@ -483,12 +470,13 @@ function App() {
     )
   }
 
-  // Determine current user's role on active project
+  // Determine current user's role on active project. Admin and the owner both have full
+  // (MEMBER-level) access regardless of what the project_members table says.
   const getCurrentProjectRole = (): ProjectMemberRole | null => {
     if (!currentUser) return null
-    if (currentUser.role === 'ADMIN') return 'OWNER'
-    if (projectData.owner_id === currentUser.id) return 'OWNER'
-    
+    if (currentUser.role === 'ADMIN') return 'MEMBER'
+    if (projectData.owner_id === currentUser.id) return 'MEMBER'
+
     const member = projectMembers.find(m => m.user_id === currentUser.id)
     return member ? member.role : null
   }
@@ -606,49 +594,24 @@ function App() {
     }
   }
 
-  const handleSubmitForReview = async () => {
+  const handlePublishProject = async () => {
     if (!activeProjectId || !token) return
     try {
-      const response = await fetch(`${API_BASE_URL}/api/projects/${activeProjectId}/submit`, {
+      const response = await fetch(`${API_BASE_URL}/api/projects/${activeProjectId}/publish`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       })
       if (response.ok) {
         const data = await unwrapApiResponse(response)
         setProjectData(prev => ({ ...prev, status: data.new_status }))
-        setNotice({ title: 'Project Submitted', detail: 'Project is now under review.' })
-        setTimeout(() => setNotice(null), 1800)
-      }
-    } catch (error) {
-      console.error("Failed to submit project", error)
-    }
-  }
-
-  const handleReviewProject = async (approved: boolean) => {
-    if (!activeProjectId || !token) return
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/projects/${activeProjectId}/review`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ approved, feedback: reviewerFeedback })
-      })
-      if (response.ok) {
-        const data = await unwrapApiResponse(response)
-        setProjectData(prev => ({ ...prev, status: data.new_status }))
-        setReviewerFeedback('')
-        setNotice({ 
-          title: approved ? 'Project Approved' : 'Project Rejected', 
-          detail: approved ? 'Requirements document marked as approved!' : 'Project returned to Business Analyst.' 
-        })
+        setNotice({ title: 'Project Published', detail: 'The workspace is now published and locked.' })
         setTimeout(() => setNotice(null), 1800)
       } else {
-        alert("Failed to review project.")
+        const err = await response.json().catch(() => null)
+        alert(err?.detail || "Failed to publish project.")
       }
     } catch (error) {
-      console.error("Failed to review project", error)
+      console.error("Failed to publish project", error)
     }
   }
 
@@ -658,94 +621,6 @@ function App() {
     }
   }, [chatMessages])
 
-  const fetchAdminData = async () => {
-    if (!token) return
-    try {
-      const uRes = await fetch(`${API_BASE_URL}/api/admin/users`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-      if (uRes.ok) {
-        setUsersList(await unwrapApiResponse(uRes))
-      }
-      
-      const lRes = await fetch(`${API_BASE_URL}/api/admin/audit-logs`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-      if (lRes.ok) {
-        setLogsList(await unwrapApiResponse(lRes))
-      }
-    } catch (e) {
-      console.error("Failed to load admin data", e)
-    }
-  }
-
-  const handleUpdateUserRole = async (userId: number, newRole: string) => {
-    if (!token) return
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/role`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ role: newRole })
-      })
-      if (response.ok) {
-        setNotice({ title: "Role Updated", detail: `User role was successfully updated to ${newRole}.` })
-        setTimeout(() => setNotice(null), 1800)
-        await fetchAdminData()
-      } else {
-        const err = await response.json()
-        alert(err.detail || "Failed to update role.")
-      }
-    } catch (e) {
-      console.error("Failed to update role", e)
-    }
-  }
-
-  const handleCreateUserByAdmin = async (e: FormEvent) => {
-    e.preventDefault()
-    if (!token) return
-    if (!adminNewName || !adminNewEmail || !adminNewPassword) {
-      alert("Please fill in all user details.")
-      return
-    }
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/users`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          name: adminNewName,
-          email: adminNewEmail,
-          password: adminNewPassword,
-          role: adminNewRole
-        })
-      })
-      if (response.ok) {
-        setNotice({ title: "User Added", detail: `Successfully created user ${adminNewName} with role ${adminNewRole}` })
-        setTimeout(() => setNotice(null), 1800)
-        setAdminNewName('')
-        setAdminNewEmail('')
-        setAdminNewPassword('')
-        setAdminNewRole('BUSINESS_ANALYST')
-        await fetchAdminData()
-      } else {
-        const err = await response.json()
-        alert(err.detail || "Failed to create user.")
-      }
-    } catch (e) {
-      console.error("Failed to add user", e)
-    }
-  }
-
-  useEffect(() => {
-    if (activePage === 'admin') {
-      void fetchAdminData()
-    }
-  }, [activePage])
 
   // Profile and Initial setup
   useEffect(() => {
@@ -796,7 +671,7 @@ function App() {
           
           // Path routing protection
           if (window.location.pathname === '/admin') {
-            if (user.role === 'SUPER_ADMIN' || user.role === 'ADMIN') {
+            if (user.role === 'ADMIN') {
               setActivePage('admin')
             } else {
               // Redirect non-admins to dashboard
@@ -823,7 +698,7 @@ function App() {
     const handlePopState = () => {
       const path = window.location.pathname
       if (path === '/admin') {
-        if (currentUser && (currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'ADMIN')) {
+        if (currentUser && currentUser.role === 'ADMIN') {
           setActivePage('admin')
         } else {
           setActivePage('dashboard')
@@ -1259,7 +1134,7 @@ function App() {
         setLoginPassword('')
         
         // Handle admin automatic routing redirect
-        if (data.user.role === 'SUPER_ADMIN' || data.user.role === 'ADMIN') {
+        if (data.user.role === 'ADMIN') {
           setActivePage('admin')
           window.history.pushState({}, '', '/admin')
         } else {
@@ -1287,7 +1162,7 @@ function App() {
       const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: regName, email: regEmail, password: regPassword, role: regRole })
+        body: JSON.stringify({ name: regName, email: regEmail, password: regPassword })
       })
       if (response.ok) {
         setNotice({ title: 'Registration Complete', detail: 'Account created! Logging in now...' })
@@ -1306,7 +1181,7 @@ function App() {
           setRegEmail('')
           setRegPassword('')
           
-          if (data.user.role === 'SUPER_ADMIN' || data.user.role === 'ADMIN') {
+          if (data.user.role === 'ADMIN') {
             setActivePage('admin')
             window.history.pushState({}, '', '/admin')
           } else {
@@ -1348,8 +1223,6 @@ function App() {
 
   const getStatusColor = (status: string = 'DRAFT') => {
     switch (status) {
-      case 'APPROVED': return '#10b981';
-      case 'PENDING_REVIEW': return '#f59e0b';
       case 'PUBLISHED': return '#6366f1';
       default: return '#64748b';
     }
@@ -1357,12 +1230,8 @@ function App() {
 
   const getRoleLabel = (role: UserRole) => {
     switch (role) {
-      case 'SUPER_ADMIN': return 'Super Admin';
       case 'ADMIN': return 'Administrator';
-      case 'BUSINESS_ANALYST': return 'Business Analyst';
-      case 'PROJECT_MANAGER': return 'Project Manager';
-      case 'VIEWER': return 'Viewer';
-      case 'REVIEWER': return 'Review Committee';
+      case 'USER': return 'User';
       default: return role;
     }
   }
@@ -1428,24 +1297,24 @@ function App() {
         
         {/* Right Form Side */}
         <div className="auth-form-side">
-          <div className={`auth-card-container ${authTab === 'admin' || authTab === 'admin_register' ? 'admin-portal-mode' : ''}`}>
+          <div className={`auth-card-container ${authTab === 'admin' ? 'admin-portal-mode' : ''}`}>
             {/* Tabs header */}
             <div className="auth-tabs">
-              <button 
+              <button
                 onClick={() => { setAuthTab('login'); setAuthError('') }}
                 className={`auth-tab-btn ${authTab === 'login' ? 'active' : ''}`}
               >
                 Sign In
               </button>
-              <button 
-                onClick={() => { setAuthTab('register'); setRegRole('BUSINESS_ANALYST'); setAuthError('') }}
+              <button
+                onClick={() => { setAuthTab('register'); setAuthError('') }}
                 className={`auth-tab-btn ${authTab === 'register' ? 'active' : ''}`}
               >
                 Register
               </button>
-              <button 
+              <button
                 onClick={() => { setAuthTab('admin'); setAuthError('') }}
-                className={`auth-tab-btn ${authTab === 'admin' || authTab === 'admin_register' ? 'active' : ''}`}
+                className={`auth-tab-btn ${authTab === 'admin' ? 'active' : ''}`}
               >
                 Admin Portal 🛡️
               </button>
@@ -1455,11 +1324,11 @@ function App() {
             <div style={{ padding: '32px' }}>
               <div style={{ textAlign: 'center', marginBottom: '24px' }}>
                 <h2 style={{ margin: '0 0 6px 0', fontSize: '1.5rem', color: 'var(--dark-slate)' }}>
-                  {authTab === 'admin' || authTab === 'admin_register' ? 'Control Console' : 'BA Workspace'}
+                  {authTab === 'admin' ? 'Control Console' : 'BA Workspace'}
                 </h2>
                 <p style={{ margin: '0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                  {authTab === 'admin' || authTab === 'admin_register'
-                    ? 'Authorized Administrative Access Only' 
+                  {authTab === 'admin'
+                    ? 'Authorized Administrative Access Only'
                     : 'Enterprise Requirement Discovery Portal'}
                 </p>
               </div>
@@ -1479,7 +1348,7 @@ function App() {
                 </div>
               )}
 
-              {(authTab === 'admin' || authTab === 'admin_register') && (
+              {authTab === 'admin' && (
                 <div className="admin-warning-box">
                   <strong>SYSTEM SECURITY NOTICE:</strong> All authentication attempts, system settings changes, and audit log accesses are strictly monitored and recorded.
                 </div>
@@ -1526,17 +1395,6 @@ function App() {
                     {authTab === 'admin' ? 'Enter Control Console 🛡️' : 'Sign In to Workspace'}
                   </button>
 
-                  {authTab === 'admin' && (
-                    <div style={{ marginTop: '16px', textAlign: 'center', fontSize: '0.85rem', color: '#64748b' }}>
-                      Don't have an admin account?{' '}
-                      <a 
-                        onClick={() => { setAuthTab('admin_register'); setRegRole('ADMIN'); setAuthError('') }}
-                        style={{ color: '#ef4444', fontWeight: '700', cursor: 'pointer', textDecoration: 'underline' }}
-                      >
-                        Register Admin
-                      </a>
-                    </div>
-                  )}
                 </form>
               ) : (
                 <form onSubmit={handleRegisterSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -1573,43 +1431,14 @@ function App() {
                     />
                   </label>
 
-                  {authTab === 'admin_register' && (
-                    <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', fontWeight: '600' }}>
-                      Admin System Role
-                      <select 
-                        value={regRole} 
-                        onChange={e => setRegRole(e.target.value as UserRole)}
-                        style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', cursor: 'pointer', backgroundColor: '#fff' }}
-                      >
-                        <option value="ADMIN">ADMIN</option>
-                        <option value="SUPER_ADMIN">SUPER_ADMIN</option>
-                        <option value="PROJECT_MANAGER">PROJECT_MANAGER</option>
-                        <option value="VIEWER">VIEWER</option>
-                        <option value="REVIEWER">REVIEWER</option>
-                      </select>
-                    </label>
-                  )}
-
-                  <button type="submit" className={authTab === 'admin_register' ? 'danger' : 'primary'} style={{
+                  <button type="submit" className="primary" style={{
                     padding: '12px',
                     fontSize: '0.95rem',
                     marginTop: '12px',
                     width: '100%'
                   }}>
-                    {authTab === 'admin_register' ? 'Create Admin Account 🛡️' : 'Create Account'}
+                    Create Account
                   </button>
-
-                  {authTab === 'admin_register' && (
-                    <div style={{ marginTop: '16px', textAlign: 'center', fontSize: '0.85rem', color: '#64748b' }}>
-                      Already have an admin account?{' '}
-                      <a 
-                        onClick={() => { setAuthTab('admin'); setAuthError('') }}
-                        style={{ color: '#ef4444', fontWeight: '700', cursor: 'pointer', textDecoration: 'underline' }}
-                      >
-                        Sign In
-                      </a>
-                    </div>
-                  )}
                 </form>
               )}
             </div>
@@ -1625,7 +1454,8 @@ function App() {
     const pendingProjects = totalProjects - completedProjects
     const hoursSaved = completedProjects * 6
 
-    const canCreate = currentUser && (currentUser.role === 'ADMIN' || currentUser.role === 'BUSINESS_ANALYST' || currentUser.role === 'REVIEWER')
+    // Every account type may start a project.
+    const canCreate = !!currentUser
 
     return (
       <div className="dashboard-layout" style={{ display: 'flex', flexDirection: 'column', gap: '32px', width: '100%' }}>
@@ -1853,11 +1683,8 @@ function App() {
   const renderInterview = () => {
     const isViewer = projectRole === 'VIEWER'
     const isOwnerOrAdmin = currentUser && (projectData.owner_id === currentUser.id || currentUser.role === 'ADMIN')
-    
-    // Status banners
-    const isApproved = projectData.status === 'APPROVED'
-    const isInReview = projectData.status === 'PENDING_REVIEW'
-    const isLocked = isViewer || isApproved || isInReview || projectData.status === 'PUBLISHED'
+    const isPublished = projectData.status === 'PUBLISHED'
+    const isLocked = isViewer || isPublished
     
     return (
       <div className="interview-shell">
@@ -1890,15 +1717,15 @@ function App() {
           </div>
           
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-            {projectData.status === 'DRAFT' && isOwnerOrAdmin && (
-              <button className="primary" style={{ backgroundColor: '#f59e0b', boxShadow: '0 4px 12px rgba(245, 158, 11, 0.2)', padding: '6px 12px', fontSize: '0.82rem' }} onClick={handleSubmitForReview}>
-                Submit for Review
+            {projectData.status === 'DRAFT' && projectRole === 'MEMBER' && (
+              <button className="primary" style={{ backgroundColor: '#f59e0b', boxShadow: '0 4px 12px rgba(245, 158, 11, 0.2)', padding: '6px 12px', fontSize: '0.82rem' }} onClick={handlePublishProject}>
+                Publish Workspace
               </button>
             )}
             <button className="secondary" onClick={() => setActivePage('review')} style={{ padding: '6px 12px', fontSize: '0.82rem' }}>
               Go to Review &amp; Export
             </button>
-            {(currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMIN') && (
+            {currentUser?.role === 'ADMIN' && (
               <button 
                 className="secondary" 
                 onClick={() => {
@@ -1941,15 +1768,15 @@ function App() {
                 )}
               </div>
               
-              {/* Lock Warning Banners */}
-              {isApproved && (
-                <div style={{ background: '#ecfdf5', borderBottom: '1px solid #d1fae5', color: '#065f46', padding: '12px 24px', fontSize: '0.85rem' }}>
-                  ✅ This project has been <strong>APPROVED</strong> by the Review Committee. The workspace state is now archived and locked.
+              {/* Lock Warning Banner */}
+              {isPublished && (
+                <div style={{ background: '#eef2ff', borderBottom: '1px solid #c7d2fe', color: '#3730a3', padding: '12px 24px', fontSize: '0.85rem' }}>
+                  🚀 This project has been <strong>PUBLISHED</strong>. The workspace state is now locked.
                 </div>
               )}
-              {isInReview && (
-                <div style={{ background: '#fffbeb', borderBottom: '1px solid #fef3c7', color: '#92400e', padding: '12px 24px', fontSize: '0.85rem' }}>
-                  ⏳ This project is currently <strong>UNDER REVIEW</strong>. Editing and chat features are temporarily locked.
+              {isViewer && !isPublished && (
+                <div style={{ background: '#f1f5f9', borderBottom: '1px solid #e2e8f0', color: '#475569', padding: '12px 24px', fontSize: '0.85rem' }}>
+                  👁️ You have view-only access to this project and cannot chat with the bot here.
                 </div>
               )}
 
@@ -2286,7 +2113,7 @@ function App() {
                             onChange={e => setInviteRole(e.target.value as ProjectMemberRole)}
                             style={{ background: 'white' }}
                           >
-                            <option value="EDITOR">Editor (Can Chat &amp; Edit)</option>
+                            <option value="MEMBER">Member (Can Chat &amp; Edit)</option>
                             <option value="VIEWER">Viewer (Read Only)</option>
                           </select>
                         </label>
@@ -2311,7 +2138,8 @@ function App() {
                           <span className="badge">OWNER</span>
                         </div>
 
-                        {projectMembers.filter(m => m.role !== 'OWNER').map(m => (
+                        {/* The owner has their own row above; don't show them twice. */}
+                        {projectMembers.filter(m => m.user_id !== projectData.owner_id).map(m => (
                           <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '8px 12px', borderRadius: '8px' }}>
                             <div style={{ maxWidth: '180px', overflow: 'hidden' }}>
                               <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#1e293b', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{m.name}</div>
@@ -2320,8 +2148,8 @@ function App() {
                             <span style={{ 
                               fontSize: '0.7rem', 
                               padding: '2px 6px', 
-                              background: m.role === 'EDITOR' ? '#f0fdf4' : '#f1f5f9', 
-                              color: m.role === 'EDITOR' ? '#166534' : '#475569', 
+                              background: m.role === 'MEMBER' ? '#f0fdf4' : '#f1f5f9',
+                              color: m.role === 'MEMBER' ? '#166534' : '#475569',
                               borderRadius: '6px', 
                               fontWeight: '700' 
                             }}>
@@ -2349,9 +2177,6 @@ function App() {
   }
 
   const renderReview = () => {
-    const isReviewerOrAdmin = currentUser && (currentUser.role === 'REVIEWER' || currentUser.role === 'ADMIN')
-    const isApproved = projectData.status === 'APPROVED'
-    
     return (
       <div className="review-workspace-layout">
         <div style={{ gridColumn: 'span 2', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid #e7ebf2' }}>
@@ -2374,16 +2199,6 @@ function App() {
         </div>
 
         {/* Status specific notices */}
-        {projectData.status === 'PENDING_REVIEW' && (
-          <div style={{ gridColumn: 'span 2', background: '#fffbeb', border: '1px solid #fef3c7', color: '#92400e', padding: '16px', borderRadius: '12px', marginBottom: '20px' }}>
-            <strong>⏳ Project Review Pending:</strong> This project requirements checklist has been submitted for review.
-          </div>
-        )}
-        {projectData.status === 'APPROVED' && (
-          <div style={{ gridColumn: 'span 2', background: '#ecfdf5', border: '1px solid #d1fae5', color: '#065f46', padding: '16px', borderRadius: '12px', marginBottom: '20px' }}>
-            <strong>✅ Approved requirements:</strong> This requirements documentation is fully approved.
-          </div>
-        )}
         {projectData.status === 'PUBLISHED' && (
           <div style={{ gridColumn: 'span 2', background: '#e0e7ff', border: '1px solid #c7d2fe', color: '#3730a3', padding: '16px', borderRadius: '12px', marginBottom: '20px' }}>
             <strong>🚀 Project Published:</strong> This project requirements workspace has been published to the enterprise directory.
@@ -2398,7 +2213,7 @@ function App() {
             </div>
 
             <div className="review-actions" style={{ marginTop: '20px' }}>
-              {projectRole === 'OWNER' && projectData.status === 'DRAFT' && (
+              {projectRole === 'MEMBER' && projectData.status === 'DRAFT' && (
                 <>
                   <button className="secondary" onClick={() => handleReviewAction('Edit Overview')}>
                     Edit Overview
@@ -2420,44 +2235,11 @@ function App() {
               </button>
             </div>
 
-            {/* Reviewer decision panel */}
-            {isReviewerOrAdmin && projectData.status === 'PENDING_REVIEW' && (
-              <div style={{
-                background: '#f8fafc',
-                border: '1px solid #cbd5e1',
-                padding: '24px',
-                borderRadius: '16px',
-                marginTop: '24px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '14px'
-              }}>
-                <h3 style={{ margin: '0', color: '#0f172a' }}>Review Decision Portal</h3>
-                <p style={{ margin: '0', color: '#475569', fontSize: '0.9rem' }}>
-                  Please inspect the discovery details and requirements cards on the right column before approving or rejecting.
-                </p>
-                <textarea
-                  value={reviewerFeedback}
-                  onChange={e => setReviewerFeedback(e.target.value)}
-                  placeholder="Provide review notes or rejection feedback..."
-                  rows={3}
-                  style={{
-                    padding: '10px 14px',
-                    borderRadius: '10px',
-                    border: '1px solid #cbd5e1',
-                    fontSize: '0.9rem',
-                    width: '100%',
-                    fontFamily: 'inherit'
-                  }}
-                />
-                <div style={{ display: 'flex', gap: '12px' }}>
-                  <button className="primary" style={{ backgroundColor: '#10b981' }} onClick={() => handleReviewProject(true)}>
-                    Approve FDR Document
-                  </button>
-                  <button className="secondary" style={{ backgroundColor: '#ef4444', color: 'white' }} onClick={() => handleReviewProject(false)}>
-                    Reject &amp; Return Draft
-                  </button>
-                </div>
+            {projectRole === 'MEMBER' && projectData.status === 'DRAFT' && (
+              <div style={{ marginTop: '20px' }}>
+                <button className="primary" style={{ backgroundColor: '#6366f1' }} onClick={handlePublishProject}>
+                  🚀 Publish Workspace
+                </button>
               </div>
             )}
 
@@ -2666,205 +2448,6 @@ function App() {
     )
   }
 
-  const renderAdmin = () => {
-    return (
-      <div className="admin-layout" style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', borderBottom: '1px solid #e2e8f0', paddingBottom: '16px' }}>
-          <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-            <button 
-              className="secondary" 
-              onClick={() => setActivePage('interview')}
-              style={{ padding: '8px 14px', fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0' }}
-            >
-              🧑‍💼 Switch to BA Mode
-            </button>
-            <div>
-              <p className="eyebrow" style={{ margin: '0' }}>Administration</p>
-              <h2 style={{ margin: '4px 0 0 0' }}>System Control Panel</h2>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <button 
-              className={adminTab === 'users' ? 'primary' : 'secondary'} 
-              onClick={() => setAdminTab('users')}
-              style={{ cursor: 'pointer' }}
-            >
-              👤 Users Management
-            </button>
-            <button 
-              className={adminTab === 'logs' ? 'primary' : 'secondary'} 
-              onClick={() => setAdminTab('logs')}
-              style={{ cursor: 'pointer' }}
-            >
-              📜 Audit Logs
-            </button>
-          </div>
-        </div>
-
-        {adminTab === 'users' ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '3fr 1.5fr', gap: '24px' }}>
-            {/* Users List */}
-            <section className="panel" style={{ padding: '24px' }}>
-              <h3>Users under Administration</h3>
-              <div style={{ overflowX: 'auto', marginTop: '16px' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '2px solid #e2e8f0', color: '#475569', fontSize: '0.9rem' }}>
-                      <th style={{ padding: '12px' }}>ID</th>
-                      <th style={{ padding: '12px' }}>Name</th>
-                      <th style={{ padding: '12px' }}>Email</th>
-                      <th style={{ padding: '12px' }}>Role</th>
-                      <th style={{ padding: '12px' }}>Joined</th>
-                      <th style={{ padding: '12px' }}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {usersList.map((u) => (
-                      <tr key={u.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '0.9rem' }}>
-                        <td style={{ padding: '12px', fontWeight: 'bold' }}>{u.id}</td>
-                        <td style={{ padding: '12px' }}>{u.name}</td>
-                        <td style={{ padding: '12px', color: '#475569' }}>{u.email}</td>
-                        <td style={{ padding: '12px' }}>
-                          <span style={{
-                            background: u.role === 'ADMIN' ? '#fee2e2' : u.role === 'BUSINESS_ANALYST' ? '#dbeafe' : u.role === 'REVIEWER' ? '#fef3c7' : '#f1f5f9',
-                            color: u.role === 'ADMIN' ? '#991b1b' : u.role === 'BUSINESS_ANALYST' ? '#1e40af' : u.role === 'REVIEWER' ? '#92400e' : '#475569',
-                            padding: '4px 8px',
-                            borderRadius: '6px',
-                            fontSize: '0.75rem',
-                            fontWeight: '700'
-                          }}>
-                            {u.role}
-                          </span>
-                        </td>
-                        <td style={{ padding: '12px', color: '#64748b' }}>
-                          {u.created_at ? new Date(u.created_at).toLocaleDateString() : 'N/A'}
-                        </td>
-                        <td style={{ padding: '12px' }}>
-                          {u.id === currentUser?.id ? (
-                            <span style={{ fontSize: '0.85rem', color: '#64748b', fontStyle: 'italic' }}>Active Admin (Self)</span>
-                          ) : (
-                            <select 
-                              value={u.role} 
-                              onChange={(e) => handleUpdateUserRole(u.id, e.target.value)}
-                              style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem', cursor: 'pointer' }}
-                            >
-                              <option value="ADMIN">ADMIN</option>
-                              <option value="BUSINESS_ANALYST">BUSINESS_ANALYST</option>
-                              <option value="REVIEWER">REVIEWER</option>
-                              <option value="CLIENT">CLIENT</option>
-                            </select>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            {/* Add User Form */}
-            <section className="panel" style={{ padding: '24px', height: 'fit-content' }}>
-              <h3 style={{ marginBottom: '16px' }}>Add User</h3>
-              <form onSubmit={handleCreateUserByAdmin} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', fontWeight: '600' }}>
-                  Full Name
-                  <input 
-                    type="text" 
-                    value={adminNewName}
-                    onChange={(e) => setAdminNewName(e.target.value)}
-                    placeholder="Enter full name"
-                    required
-                    style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                  />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', fontWeight: '600' }}>
-                  Email Address
-                  <input 
-                    type="email" 
-                    value={adminNewEmail}
-                    onChange={(e) => setAdminNewEmail(e.target.value)}
-                    placeholder="name@example.com"
-                    required
-                    style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                  />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', fontWeight: '600' }}>
-                  Password
-                  <input 
-                    type="password" 
-                    value={adminNewPassword}
-                    onChange={(e) => setAdminNewPassword(e.target.value)}
-                    placeholder="••••••••"
-                    required
-                    style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                  />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', fontWeight: '600' }}>
-                  System Role
-                  <select
-                    value={adminNewRole}
-                    onChange={(e) => setAdminNewRole(e.target.value as UserRole)}
-                    style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', cursor: 'pointer' }}
-                  >
-                    <option value="BUSINESS_ANALYST">BUSINESS_ANALYST</option>
-                    <option value="ADMIN">ADMIN</option>
-                    <option value="REVIEWER">REVIEWER</option>
-                    <option value="CLIENT">CLIENT</option>
-                  </select>
-                </label>
-                <button type="submit" className="primary" style={{ marginTop: '10px', width: '100%' }}>
-                  Create Account ➕
-                </button>
-              </form>
-            </section>
-          </div>
-        ) : (
-          <section className="panel" style={{ padding: '24px' }}>
-            <h3>System Audit Feed</h3>
-            <div style={{ overflowX: 'auto', marginTop: '16px' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-                <thead>
-                  <tr style={{ borderBottom: '2px solid #e2e8f0', color: '#475569', fontSize: '0.9rem' }}>
-                    <th style={{ padding: '12px' }}>Timestamp</th>
-                    <th style={{ padding: '12px' }}>User Email</th>
-                    <th style={{ padding: '12px' }}>Action</th>
-                    <th style={{ padding: '12px' }}>Project ID</th>
-                    <th style={{ padding: '12px' }}>Metadata / Details</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {logsList.map((l) => (
-                    <tr key={l.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '0.85rem' }}>
-                      <td style={{ padding: '12px', color: '#64748b', whiteSpace: 'nowrap' }}>
-                        {new Date(l.timestamp).toLocaleString()}
-                      </td>
-                      <td style={{ padding: '12px', fontWeight: '600' }}>{l.user_email}</td>
-                      <td style={{ padding: '12px' }}>
-                        <span style={{
-                          background: l.action === 'permission denied' ? '#fee2e2' : '#e2e8f0',
-                          color: l.action === 'permission denied' ? '#ef4444' : '#1e293b',
-                          padding: '4px 8px',
-                          borderRadius: '6px',
-                          fontWeight: '600',
-                          fontSize: '0.75rem'
-                        }}>
-                          {l.action}
-                        </span>
-                      </td>
-                      <td style={{ padding: '12px', color: '#475569' }}>{l.project_id || 'N/A'}</td>
-                      <td style={{ padding: '12px', fontFamily: 'monospace', color: '#475569', fontSize: '0.75rem', maxWidth: '350px', wordBreak: 'break-all' }}>
-                        {l.metadata ? JSON.stringify(l.metadata) : 'None'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
-      </div>
-    )
-  }
 
   // If not authenticated, render Login/Register
   if (!token || !currentUser) {
@@ -2879,7 +2462,7 @@ function App() {
     }
   }
 
-  if (activePage === 'admin' && currentUser && (currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'ADMIN')) {
+  if (activePage === 'admin' && currentUser && currentUser.role === 'ADMIN') {
     return (
       <AdminPortal 
         token={token!} 
@@ -2903,7 +2486,7 @@ function App() {
             <h2 style={{ margin: '4px 0 0 0' }}>Business Analyst Workshop</h2>
           </div>
           <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
-            {(currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMIN') && (
+            {currentUser?.role === 'ADMIN' && (
               <button 
                 className="secondary" 
                 onClick={() => {

@@ -1,9 +1,9 @@
 import asyncio
 import json
-import requests
+import logging
 import urllib3
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session, joinedload
@@ -16,12 +16,14 @@ from services.audit import log_action
 from dependencies.auth import (
     get_current_user,
     get_db,
-    require_role,
     require_project_access,
     require_project_owner
 )
 from utils.export import parse_markdown_to_pdf
+from utils.rate_limit import limiter, RATE_LIMIT_EXPORT
 from services.project_state_manager import get_legacy_payload, get_structured_state, DEFAULT_STATE
+
+logger = logging.getLogger("ba-bot")
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -67,10 +69,6 @@ class ProjectPayload(BaseModel):
     missing_fields: list[str]
     next_question: str
 
-class ReviewRequest(BaseModel):
-    approved: bool
-    feedback: str | None = None
-
 class InviteRequest(BaseModel):
     email: EmailStr
     role: ProjectMemberRole
@@ -80,25 +78,19 @@ def list_projects(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if current_user.role in [UserRole.SUPER_ADMIN, UserRole.ADMIN]:
+    if current_user.role == UserRole.ADMIN:
+        # Admin sees every project, regardless of membership.
         db_projects = db.query(Project).options(joinedload(Project.messages)).all()
     else:
-        from models import TeamProject
+        # A regular user sees only projects they started or were added to.
         cond = (Project.owner_id == current_user.id) | (ProjectMember.user_id == current_user.id)
-        if current_user.team_id is not None:
-            cond = cond | (TeamProject.team_id == current_user.team_id)
-        db_projects = db.query(Project).options(joinedload(Project.messages)).outerjoin(ProjectMember).outerjoin(TeamProject, TeamProject.project_id == Project.id).filter(
+        db_projects = db.query(Project).options(joinedload(Project.messages)).outerjoin(ProjectMember).filter(
             cond
         ).distinct().all()
     
     result = []
     for p in db_projects:
         try:
-            # Auto-assign session_id if missing
-            if not p.session_id:
-                import uuid
-                p.session_id = f"session-{uuid.uuid4()}"
-                db.commit()
             result.append(get_legacy_payload(p))
         except Exception:
             pass
@@ -118,19 +110,7 @@ def create_project(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if current_user.role not in [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.BUSINESS_ANALYST, UserRole.PROJECT_MANAGER, UserRole.REVIEWER]:
-        # Log unauthorized attempt
-        log_action(
-            db=db,
-            user_id=current_user.id,
-            action="permission denied",
-            metadata={"reason": f"Role {current_user.role.value} tried to create project"}
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only Admins, Business Analysts, Project Managers, and Reviewers can create projects"
-        )
-
+    # Every account type (ADMIN and USER) may start a project; there is no role to gate here.
     import uuid
     if not payload.sessionId:
         payload.sessionId = f"session-{uuid.uuid4()}"
@@ -161,7 +141,7 @@ def create_project(
     member = ProjectMember(
         project_id=db_project.id,
         user_id=current_user.id,
-        role=ProjectMemberRole.PROJECT_MANAGER
+        role=ProjectMemberRole.MEMBER
     )
     db.add(member)
     db.commit()
@@ -181,7 +161,7 @@ def create_project(
 def update_project(
     project_id: int,
     payload: ProjectPayload,
-    project: Project = Depends(require_project_access(ProjectMemberRole.CONTRIBUTOR)),
+    project: Project = Depends(require_project_access(ProjectMemberRole.MEMBER)),
     db: Session = Depends(get_db)
 ):
     if project.locked:
@@ -319,13 +299,10 @@ def _build_pdf_export(project_name: str, state: dict):
             else:
                 document_text = ""
     except Exception as e:
-        print(f"[EXPORT WARNING] Failed to connect to {PREDICTION_URL}: {str(e)}. Falling back to local generation...")
-        target_port = os.getenv("PORT", "8000")
-        mock_url = f"http://127.0.0.1:{target_port}/api/mock-predict"
+        logger.warning(f"Failed to connect to {PREDICTION_URL}: {str(e)}. Falling back to local generation...")
         try:
-            res_mock = requests.post(mock_url, json=payload, timeout=10)
-            mock_data = res_mock.json()
-            document_text = mock_data.get("text")
+            from utils.mock_llm import build_mock_response_text
+            document_text = build_mock_response_text(prompt)
         except Exception:
             document_text = None
 
@@ -339,7 +316,9 @@ def _build_pdf_export(project_name: str, state: dict):
 
 
 @router.get("/{project_id}/export")
+@limiter.limit(RATE_LIMIT_EXPORT)
 async def export_project(
+    request: Request,
     project_id: int,
     format: str,
     project: Project = Depends(require_project_access(ProjectMemberRole.VIEWER)),
@@ -384,62 +363,18 @@ async def export_project(
         }
     )
 
-@router.post("/{project_id}/submit")
-def submit_project(
-    project_id: int,
-    project: Project = Depends(require_project_access(ProjectMemberRole.CONTRIBUTOR)),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    if project.locked:
-        raise HTTPException(status_code=403, detail="Project is locked and cannot be submitted.")
-
-    project.status = "PENDING_REVIEW"
-    db.commit()
-    
-    log_action(
-        db=db,
-        user_id=current_user.id,
-        action="project submission",
-        project_id=project_id
-    )
-    return {"status": "ok", "new_status": "PENDING_REVIEW"}
-
-@router.post("/{project_id}/review")
-def review_project(
-    project_id: int,
-    payload: ReviewRequest,
-    current_user: User = Depends(require_role([UserRole.ADMIN, UserRole.REVIEWER])),
-    db: Session = Depends(get_db)
-):
-    project = db.query(Project).options(joinedload(Project.messages)).filter(Project.id == project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-        
-    new_status = "APPROVED" if payload.approved else "DRAFT"
-    project.status = new_status
-    db.commit()
-    
-    # Log audit event
-    log_action(
-        db=db,
-        user_id=current_user.id,
-        action="document approval" if payload.approved else "document rejection",
-        project_id=project_id,
-        metadata={"feedback": payload.feedback}
-    )
-    return {"status": "ok", "new_status": new_status}
-
 @router.post("/{project_id}/publish")
 def publish_project(
     project_id: int,
-    project: Project = Depends(require_project_access(ProjectMemberRole.PROJECT_MANAGER)),
+    project: Project = Depends(require_project_access(ProjectMemberRole.MEMBER)),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if project.status != "APPROVED":
-        raise HTTPException(status_code=400, detail="Only approved requirements can be published.")
-        
+    # No approval step: any project MEMBER (or the owner, or an admin) can publish once
+    # they're satisfied. Publishing locks the project against further edits.
+    if project.status == "PUBLISHED":
+        raise HTTPException(status_code=400, detail="This project is already published.")
+
     project.status = "PUBLISHED"
     project.locked = True
     db.commit()
