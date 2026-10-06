@@ -136,6 +136,91 @@ class TestTimestamps:
         assert created.tzinfo is None and abs((now - created).total_seconds()) < 10
 
 
+# ------------------------------------------------------------------ /api/predict must not block the shared threadpool
+class TestPredictStreamDoesNotBlockTheSharedThreadpool:
+    """predict() is a plain sync `def`, so its generator used to get driven via
+    Starlette's iterate_in_threadpool — anyio's *shared default* thread limiter, the
+    same one every other sync endpoint in the app relies on. app.py's
+    _stream_with_dedicated_limiter bridges it through _predict_limiter instead.
+
+    This is verified directly against the limiters rather than via real concurrent HTTP
+    requests: this branch predates issue #33's SQLite WAL/busy_timeout fix, and SQLite's
+    single-writer lock contention dominates at a concurrency level far below the shared
+    limiter's own 40-token capacity (confirmed experimentally: a live-server test with as
+    few as 20 concurrent /api/predict calls times out on DB contention alone, well before
+    the shared threadpool itself would ever be the bottleneck) — so an HTTP-level test
+    can't isolate this property without also porting that fix.
+    """
+
+    def test_fixed_path_consumes_none_of_the_shared_default_limiter(self):
+        import time as time_mod
+
+        import anyio
+        import anyio.to_thread
+
+        import app as backend_app
+
+        def _slow_gen():
+            for i in range(2):
+                time_mod.sleep(0.2)
+                yield f"chunk-{i}"
+
+        async def _main():
+            shared_limiter = anyio.to_thread.current_default_thread_limiter()
+            peak_shared = 0
+            peak_predict = 0
+
+            async def _consume():
+                nonlocal peak_shared, peak_predict
+                async for _ in backend_app._stream_with_dedicated_limiter(_slow_gen()):
+                    peak_shared = max(peak_shared, shared_limiter.borrowed_tokens)
+                    peak_predict = max(peak_predict, backend_app._predict_limiter.borrowed_tokens)
+
+            async with anyio.create_task_group() as tg:
+                for _ in range(50):
+                    tg.start_soon(_consume)
+
+            return peak_shared, peak_predict
+
+        peak_shared, peak_predict = anyio.run(_main)
+        assert peak_shared == 0, f"expected zero shared-limiter usage, got {peak_shared} borrowed tokens"
+        assert peak_predict > 0, "the dedicated limiter never got used; the test isn't exercising anything"
+
+    def test_the_old_unfixed_path_would_have_consumed_the_shared_default_limiter(self):
+        """Non-vacuousness check: confirms the comparison above is meaningful by showing
+        what the *old* code path (Starlette's own iterate_in_threadpool, what a plain
+        returned sync generator gets wrapped in) actually does to the same shared
+        limiter under the same load."""
+        import time as time_mod
+
+        import anyio
+        import anyio.to_thread
+        from starlette.concurrency import iterate_in_threadpool
+
+        def _slow_gen():
+            for i in range(2):
+                time_mod.sleep(0.2)
+                yield f"chunk-{i}"
+
+        async def _main():
+            shared_limiter = anyio.to_thread.current_default_thread_limiter()
+            peak_shared = 0
+
+            async def _consume():
+                nonlocal peak_shared
+                async for _ in iterate_in_threadpool(_slow_gen()):
+                    peak_shared = max(peak_shared, shared_limiter.borrowed_tokens)
+
+            async with anyio.create_task_group() as tg:
+                for _ in range(50):
+                    tg.start_soon(_consume)
+
+            return peak_shared
+
+        peak_shared = anyio.run(_main)
+        assert peak_shared > 0, "the old path should have drawn from the shared limiter"
+
+
 # ------------------------------------------------------------------ deployment review: health probe separation
 class TestHealthCheckSeparation:
     def test_liveness_touches_neither_the_database_nor_storage(self, client, monkeypatch):

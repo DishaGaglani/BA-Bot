@@ -84,3 +84,19 @@ def check_and_summarize(db: Session, project: Project) -> bool:
         logger.error(f"Failed to perform auto-summarization: {str(e)}", exc_info=True)
         db.rollback()
         return False
+
+
+def run_summarization_job(project_id: int) -> None:
+    """Entry point for FastAPI's BackgroundTasks. Runs after the /api/predict response
+    has already been sent, so it can't reuse the request's db session (closed by then)
+    or the request's Project instance (bound to that closed session) — it opens its own
+    session and re-fetches the project instead."""
+    from database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if project:
+            check_and_summarize(db, project)
+    finally:
+        db.close()
