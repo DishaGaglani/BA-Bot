@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { API_BASE_URL } from '../config';
+import { API_BASE_URL, unwrapApiResponse } from '../config';
 
 export interface ProjectData {
   id: number;
@@ -60,7 +60,7 @@ const ProjectManagement: React.FC<ProjectManagementProps> = ({
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await unwrapApiResponse(res);
         setProjects(data);
       }
     } catch (err) {
