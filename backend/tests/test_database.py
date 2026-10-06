@@ -18,7 +18,6 @@ from models import (
 )
 from services.audit import log_action
 from services.conversation_manager import get_active_messages, get_unarchived_messages, save_message
-from tests.helpers import pending_fix
 
 
 def _now():
@@ -122,7 +121,6 @@ class TestConstraints:
         with pytest.raises(IntegrityError):
             db.commit()
 
-    @pending_fix("issue 6", "project_members has no unique constraint on (project_id, user_id), so duplicate memberships are possible")
     def test_membership_pair_is_unique(self, db, make_user, make_project):
         owner, guest = make_user(), make_user()
         project = make_project(owner)
@@ -132,7 +130,6 @@ class TestConstraints:
         with pytest.raises(IntegrityError):
             db.commit()
 
-    @pending_fix("issue 6", "foreign-key columns used by hot queries (messages.project_id, audit_logs.*) have no index")
     def test_hot_foreign_keys_are_indexed(self):
         indexed = lambda table: {c for ix in inspect(engine).get_indexes(table) for c in ix["column_names"]}
         assert "project_id" in indexed("messages")
