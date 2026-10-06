@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 
 from database import engine, SessionLocal
-from utils.migrate import run_migration
+from utils.db_bootstrap import run_migration
 from utils.prod_ready import validate_environment, setup_global_exception_handlers, logger, request_with_retry, MAX_REQUEST_BODY_BYTES, make_error_response
 from utils.rate_limit import limiter, RATE_LIMIT_PREDICT
 from utils import metrics, observability

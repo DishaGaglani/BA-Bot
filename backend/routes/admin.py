@@ -1,6 +1,7 @@
 import json
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, EmailStr
 import sys
 import os
@@ -696,9 +697,22 @@ def transfer_admin_project_ownership(
             role=ProjectMemberRole.MEMBER
         )
         db.add(new_member)
-        
-    db.commit()
-    
+
+    try:
+        db.commit()
+    except IntegrityError:
+        # A concurrent request already inserted this membership row; rollback also
+        # reverts the owner_id change above, so both are re-applied before retrying.
+        db.rollback()
+        project.owner_id = payload.owner_id
+        existing = db.query(ProjectMember).filter(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == payload.owner_id
+        ).first()
+        if existing:
+            existing.role = ProjectMemberRole.MEMBER
+        db.commit()
+
     from services.audit import log_action
     log_action(
         db=db,
@@ -741,9 +755,19 @@ def assign_admin_project_members(
                 role=payload.role
             )
             db.add(new_member)
+        try:
+            db.commit()
+        except IntegrityError:
+            # A concurrent request already added this member; update its role instead.
+            db.rollback()
+            existing = db.query(ProjectMember).filter(
+                ProjectMember.project_id == project_id,
+                ProjectMember.user_id == uid
+            ).first()
+            if existing:
+                existing.role = payload.role
+                db.commit()
         added_count += 1
-        
-    db.commit()
     
     from services.audit import log_action
     log_action(
