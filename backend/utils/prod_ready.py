@@ -1,7 +1,8 @@
 import os
 import sys
+import uuid
 import time
-from time import perf_counter
+from time import perf_counter  # bound by name: tests replace this module's `time` with a stub that only has sleep()
 import json
 import logging
 import requests
@@ -9,104 +10,68 @@ from dotenv import load_dotenv
 from fastapi import Request, Response, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy.orm import Session
-from traceid import TraceId
 from database import SessionLocal
 
 # Load environment variables
 load_dotenv()
 
-# Configure logging
-class _DefaultTraceIdFilter(logging.Filter):
-    """The format string below requires a traceId on every record, but only our
-    own calls pass extra={"traceId": ...}. Records from anywhere else (third-party
-    libraries, or a call that forgot it) would otherwise raise KeyError inside the
-    handler and lose the log line. This fills in "-" only when the field is
-    missing, so records that do carry a traceId are left untouched. It's attached
-    to the handler, not set via a LogRecord factory: extra= is applied after the
-    factory runs and refuses to overwrite an existing attribute."""
-    def filter(self, record: logging.LogRecord) -> bool:
-        if not hasattr(record, "traceId"):
-            record.traceId = "-"
-        return True
+# Requests with a larger Content-Length than this are rejected before their body
+# is read, so a client can't force the server to buffer an arbitrarily large
+# payload into memory. This app's largest legitimate request bodies (chat messages,
+# project state updates) are comfortably under 2MB; the 4MB default doubles that as
+# headroom for header/framing overhead so legitimate requests aren't rejected.
+MAX_REQUEST_BODY_BYTES = int(os.getenv("MAX_REQUEST_BODY_BYTES", str(4 * 1024 * 1024)))
 
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] traceId=%(traceId)s %(message)s"
 )
-for _handler in logging.getLogger().handlers:
-    if not any(isinstance(f, _DefaultTraceIdFilter) for f in _handler.filters):
-        _handler.addFilter(_DefaultTraceIdFilter())
 logger = logging.getLogger("ba-bot")
 
-def new_trace_id() -> str:
-    """Generate a fresh trace id via the traceid library instead of calling
-    uuid.uuid4() directly, so ID generation lives in one place backed by a
-    maintained library rather than an inline stdlib call. traceid stores the
-    value in a contextvar, which we don't otherwise rely on here (the trace id
-    is still threaded explicitly via request.state / extra={"traceId": ...}) so
-    each call clears any prior value first rather than reusing the ambient one."""
-    TraceId.clear()
-    TraceId.gen()
-    return str(TraceId.get())
+# Every log line carries the current request's trace id and is scrubbed of credentials.
+from utils import metrics, observability
+observability.configure_logging()
 
 # --- Retries with Exponential Backoff ---
 def request_with_retry(method: str, url: str, **kwargs):
     max_retries = 3
     backoff = 1.0  # seconds
+    raw_json = kwargs.get("json")
+    payload: dict = raw_json if isinstance(raw_json, dict) else {}
+    operation = "stream_connect" if payload.get("streaming") else "completion"
+    prompt_tokens = metrics.estimate_tokens(str(payload.get("question", "")))
     started = perf_counter()
-    for attempt in range(1, max_retries + 1):
-        try:
-            if "timeout" not in kwargs:
-                kwargs["timeout"] = (5, 90)
-            elif isinstance(kwargs["timeout"], (int, float)):
-                kwargs["timeout"] = (5, kwargs["timeout"])
-            response = requests.request(method, url, **kwargs)
-            response.raise_for_status()
-            response_time = (perf_counter() - started) * 1000
-            logger.info(
-                f"LLM call to {url} succeeded on attempt {attempt}/{max_retries} response_time={response_time:.2f}ms",
-                extra={"traceId": "system"}
-            )
-            return response
-        except (requests.exceptions.RequestException, requests.exceptions.Timeout) as exc:
-            if attempt == max_retries:
-                response_time = (perf_counter() - started) * 1000
-                logger.error(
-                    f"Request to {url} failed after {max_retries} attempts response_time={response_time:.2f}ms: {str(exc)}",
-                    extra={"traceId": "system"}
+    with observability.span("llm.call", **{"llm.operation": operation, "llm.prompt_tokens_estimate": prompt_tokens}):
+        for attempt in range(1, max_retries + 1):
+            try:
+                if "timeout" not in kwargs:
+                    kwargs["timeout"] = (5, 90)
+                elif isinstance(kwargs["timeout"], (int, float)):
+                    kwargs["timeout"] = (5, kwargs["timeout"])
+                response = requests.request(method, url, **kwargs)
+                response.raise_for_status()
+                metrics.record_llm_call(operation, perf_counter() - started, "success")
+                if operation == "completion":
+                    metrics.record_llm_tokens(
+                        "completion", input_tokens=prompt_tokens, output_tokens=metrics.estimate_tokens(response.text or "")
+                    )
+                else:
+                    metrics.record_llm_tokens("chat", input_tokens=prompt_tokens)  # output is counted when the reply completes
+                return response
+            except (requests.exceptions.RequestException, requests.exceptions.Timeout) as exc:
+                if attempt == max_retries:
+                    metrics.record_llm_call(operation, perf_counter() - started, "error")
+                    logger.error(f"Request to {url} failed after {max_retries} attempts: {str(exc)}")
+                    raise exc
+                metrics.LLM_RETRIES.labels(operation=operation).inc()
+                sleep_time = backoff * (2 ** (attempt - 1))
+                logger.warning(
+                    f"Request to {url} failed (attempt {attempt}/{max_retries}). Retrying in {sleep_time}s... Error: {str(exc)}"
                 )
-                raise exc
-            sleep_time = backoff * (2 ** (attempt - 1))
-            logger.warning(
-                f"Request to {url} failed (attempt {attempt}/{max_retries}). Retrying in {sleep_time}s... Error: {str(exc)}",
-                extra={"traceId": "system"}
-            )
-            time.sleep(sleep_time)
-
-
-# --- Database query latency ---
-def instrument_db_latency(engine) -> None:
-    """Logs each SQL statement's wall-clock duration. Call once at startup, right after
-    the engine is created (app.py does this alongside validate_environment()). Attaching
-    the listeners more than once per engine would double-log every query, so this is not
-    meant to be called per-request."""
-    from sqlalchemy import event
-
-    @event.listens_for(engine, "before_cursor_execute")
-    def _before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
-        context._telemetry_query_start = perf_counter()
-
-    @event.listens_for(engine, "after_cursor_execute")
-    def _after_cursor_execute(conn, cursor, statement, parameters, context, executemany):
-        started = getattr(context, "_telemetry_query_start", None)
-        if started is None:
-            return
-        response_time = (perf_counter() - started) * 1000
-        # First line only: statements can be long (bulk inserts), and the operation
-        # (SELECT/INSERT/...) is what matters for a latency log line, not the full SQL.
-        first_line = statement.strip().splitlines()[0][:80]
-        logger.debug(f"DB query response_time={response_time:.2f}ms: {first_line}")
+                time.sleep(sleep_time)
 
 # --- Environment Validation ---
 def validate_environment():
@@ -167,24 +132,41 @@ def make_error_response(message: str, error_code: str, trace_id: str, status_cod
             "message": message,
             "errorCode": error_code,
             "traceId": trace_id
-        }
+        },
+        headers={"X-Trace-Id": trace_id}
     )
 
 def setup_global_exception_handlers(app):
+    @app.exception_handler(RateLimitExceeded)
+    async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+        trace_id = getattr(request.state, "trace_id", str(uuid.uuid4()))
+        logger.warning(f"Rate limit exceeded: {exc.detail}", extra={"traceId": trace_id})
+        response = make_error_response(
+            f"Too many requests: {exc.detail}", "RATE_LIMIT_EXCEEDED", trace_id, 429
+        )
+        # Preserve slowapi's Retry-After / X-RateLimit-* headers on our own error shape
+        limiter = getattr(request.app.state, "limiter", None)
+        if limiter is not None:
+            response = limiter._inject_headers(response, request.state.view_rate_limit)
+        return response
+
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
-        trace_id = getattr(request.state, "trace_id", None) or new_trace_id()
+        trace_id = getattr(request.state, "trace_id", str(uuid.uuid4()))
         logger.error(f"HTTPException: {exc.detail}", extra={"traceId": trace_id})
         return make_error_response(exc.detail, f"HTTP_{exc.status_code}", trace_id, exc.status_code)
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
-        trace_id = getattr(request.state, "trace_id", None) or new_trace_id()
+        trace_id = getattr(request.state, "trace_id", str(uuid.uuid4()))
         logger.error(f"Validation Error: {exc.errors()}", extra={"traceId": trace_id})
         return make_error_response("Invalid request payload parameters.", "VALIDATION_ERROR", trace_id, 422)
 
     @app.exception_handler(Exception)
     async def generic_exception_handler(request: Request, exc: Exception):
-        trace_id = getattr(request.state, "trace_id", None) or new_trace_id()
+        trace_id = getattr(request.state, "trace_id", str(uuid.uuid4()))
         logger.exception(f"Unhandled Exception: {str(exc)}", extra={"traceId": trace_id})
+        metrics.UNHANDLED_EXCEPTIONS.labels(source="http").inc()
+        # No explicit Sentry call: its Starlette integration already reports unhandled route
+        # exceptions (scrubbed by before_send, tagged with this trace id by the middleware).
         return make_error_response("An unexpected internal server error occurred.", "INTERNAL_SERVER_ERROR", trace_id, 500)

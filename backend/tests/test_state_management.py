@@ -110,20 +110,17 @@ class TestUpdateProjectState:
         update_project_state(db, project, "u", "a", active_section="Stakeholders")
         assert "Stakeholders" in llm.calls[-1]["prompt"]
 
-    @pending_fix("issue 7", "delta keys are merged into state without a schema, so hallucinated keys are persisted")
     def test_unknown_keys_from_the_model_are_not_persisted(self, db, llm, project):
         llm.delta_text = json.dumps({"department": "IT", "made_up_field": "junk"})
         update_project_state(db, project, "u", "a")
         stored = json.loads(_fresh(db, project).structured_state)
         assert stored["department"] == "IT" and "made_up_field" not in stored
 
-    @pending_fix("issue 7", "the model can overwrite internally-managed bookkeeping such as asked_questions")
     def test_model_cannot_overwrite_internal_bookkeeping(self, db, llm, project):
         llm.delta_text = json.dumps({"asked_questions": ["forged"], "department": "IT"})
         state = update_project_state(db, project, "u", "Real question?")
         assert "forged" not in state["asked_questions"]
 
-    @pending_fix("issue 7", "a bare string for a list field replaces the list and later renders one requirement per character")
     def test_bare_string_for_a_list_field_does_not_corrupt_state(self, db, llm, project):
         llm.delta_text = json.dumps({"functional_requirements": "SSO authentication required"})
         update_project_state(db, project, "u", "a")

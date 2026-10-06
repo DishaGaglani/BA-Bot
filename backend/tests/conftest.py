@@ -82,8 +82,7 @@ def _schema():
 
 @pytest.fixture(autouse=True)
 def _clean_db(_schema):
-    # Foreign keys aren't enforced by SQLite here, so table order doesn't matter (and
-    # sorted_tables warns because users<->teams reference each other).
+    # Foreign keys aren't enforced by SQLite here, so table order doesn't matter.
     with engine.begin() as conn:
         for table in Base.metadata.tables.values():
             conn.execute(table.delete())
@@ -173,7 +172,7 @@ def live_url():
 def make_user(db):
     counter = itertools.count(1)
 
-    def _make(role=UserRole.BUSINESS_ANALYST, *, email=None, status="ACTIVE", team_id=None, name=None):
+    def _make(role=UserRole.USER, *, email=None, status="ACTIVE", name=None):
         n = next(counter)
         user = User(
             name=name or f"user{n}",
@@ -181,7 +180,6 @@ def make_user(db):
             password_hash=_PASSWORD_HASH,
             role=role,
             status=status,
-            team_id=team_id,
         )
         db.add(user)
         db.commit()
@@ -216,7 +214,7 @@ def make_project(db):
         db.commit()
         db.refresh(project)
         if owner_is_member:
-            db.add(ProjectMember(project_id=project.id, user_id=owner.id, role=ProjectMemberRole.PROJECT_MANAGER))
+            db.add(ProjectMember(project_id=project.id, user_id=owner.id, role=ProjectMemberRole.MEMBER))
             db.commit()
         return project
 
@@ -322,10 +320,10 @@ def llm(monkeypatch):
     fake = FakeLLM()
     import services.fdr_summary as fdr_summary
     import services.project_state_manager as state_manager
-    import utils.telemetry as prod_ready
+    import utils.prod_ready as prod_ready
 
     # Each module binds request_with_retry by name at import; the lazy importers
-    # (summary_manager, routes.projects) read it from utils.telemetry at call time.
+    # (summary_manager, routes.projects) read it from utils.prod_ready at call time.
     for module in (backend_app, state_manager, fdr_summary, prod_ready):
         monkeypatch.setattr(module, "request_with_retry", fake)
     return fake

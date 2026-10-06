@@ -113,7 +113,7 @@ const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({ token }) => {
                     <div style={{
                       width: `${percentage}%`,
                       height: '100%',
-                      background: r.role === 'SUPER_ADMIN' || r.role === 'ADMIN' ? 'var(--admin-primary)' : '#64748b',
+                      background: r.role === 'ADMIN' ? 'var(--admin-primary)' : '#64748b',
                       borderRadius: '4px'
                     }} />
                   </div>
