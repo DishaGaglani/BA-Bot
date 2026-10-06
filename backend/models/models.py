@@ -1,4 +1,3 @@
-import datetime
 import enum
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Enum as SqlEnum
 from sqlalchemy.orm import relationship
@@ -7,20 +6,20 @@ import os
 
 # Adjust path to import Base from database
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from database import Base
+from database import Base, utcnow
 
 class UserRole(str, enum.Enum):
-    SUPER_ADMIN = "SUPER_ADMIN"
+    """Account-wide role. ADMIN can see and manage everything; USER is everyone else.
+    "Viewer" is not an account type here — it's a per-project capability, see
+    ProjectMemberRole."""
     ADMIN = "ADMIN"
-    BUSINESS_ANALYST = "BUSINESS_ANALYST"
-    PROJECT_MANAGER = "PROJECT_MANAGER"
-    VIEWER = "VIEWER"
-    REVIEWER = "REVIEWER"
+    USER = "USER"
 
 class ProjectMemberRole(str, enum.Enum):
-    PROJECT_MANAGER = "PROJECT_MANAGER"
-    BUSINESS_ANALYST = "BUSINESS_ANALYST"
-    CONTRIBUTOR = "CONTRIBUTOR"
+    """Per-project access, assigned when a user is added to a specific project.
+    MEMBER can chat with the bot and edit; VIEWER can only read. The same account can be
+    a MEMBER on one project and a VIEWER on another."""
+    MEMBER = "MEMBER"
     VIEWER = "VIEWER"
 
 class User(Base):
@@ -30,18 +29,16 @@ class User(Base):
     name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
-    role = Column(SqlEnum(UserRole), default=UserRole.BUSINESS_ANALYST, nullable=False)  # type: ignore[var-annotated]
+    role = Column(SqlEnum(UserRole), default=UserRole.USER, nullable=False)
     department = Column(String, default="IT", nullable=True)
     status = Column(String, default="ACTIVE", nullable=True)
-    last_login = Column(DateTime, default=datetime.datetime.utcnow, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
-    team_id = Column(Integer, ForeignKey("teams.id"), nullable=True)
+    last_login = Column(DateTime, default=utcnow, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
 
     # Relationships
     owned_projects = relationship("Project", back_populates="owner", cascade="all, delete-orphan")
     memberships = relationship("ProjectMember", back_populates="user", cascade="all, delete-orphan")
     audit_logs = relationship("AuditLog", back_populates="user")
-    team = relationship("Team", back_populates="members", foreign_keys=[team_id])
 
 class Project(Base):
     __tablename__ = "projects"
@@ -49,7 +46,7 @@ class Project(Base):
     id = Column(Integer, primary_key=True, index=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     name = Column(String, nullable=False)
-    status = Column(String, default="DRAFT", nullable=False)  # DRAFT, IN_REVIEW, APPROVED, REJECTED
+    status = Column(String, default="DRAFT", nullable=False)  # DRAFT, PUBLISHED
     session_id = Column(String, unique=True, index=True, nullable=True)
     description = Column(Text, nullable=True)
     department = Column(String, nullable=True)
@@ -58,8 +55,8 @@ class Project(Base):
     start_date = Column(DateTime, nullable=True)
     end_date = Column(DateTime, nullable=True)
     tags = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
     data = Column(Text, nullable=True)
     summary = Column(Text, nullable=True)
     structured_state = Column(Text, nullable=True)
@@ -72,7 +69,6 @@ class Project(Base):
     members = relationship("ProjectMember", back_populates="project", cascade="all, delete-orphan")
     audit_logs = relationship("AuditLog", back_populates="project", cascade="all, delete-orphan")
     messages = relationship("Message", back_populates="project", cascade="all, delete-orphan")
-    teams = relationship("TeamProject", back_populates="project", cascade="all, delete-orphan")
 
 class ProjectMember(Base):
     __tablename__ = "project_members"
@@ -80,7 +76,7 @@ class ProjectMember(Base):
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    role = Column(SqlEnum(ProjectMemberRole), default=ProjectMemberRole.VIEWER, nullable=False)  # type: ignore[var-annotated]
+    role = Column(SqlEnum(ProjectMemberRole), default=ProjectMemberRole.MEMBER, nullable=False)
 
     # Relationships
     project = relationship("Project", back_populates="members")
@@ -93,7 +89,7 @@ class AuditLog(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     action = Column(String, nullable=False)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=True)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    timestamp = Column(DateTime, default=utcnow, nullable=False)
     metadata_json = Column(Text, nullable=True)  # renamed to avoid collision with SQLAlchemy metadata object
 
     # Relationships
@@ -109,34 +105,10 @@ class Message(Base):
     text = Column(Text, nullable=False)
     is_archived = Column(Boolean, default=False, nullable=False)
     token_count = Column(Integer, default=0, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
 
     # Relationships
     project = relationship("Project", back_populates="messages")
-
-class Team(Base):
-    __tablename__ = "teams"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, index=True, nullable=False)
-    manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
-
-    # Relationships
-    manager = relationship("User", foreign_keys=[manager_id])
-    members = relationship("User", back_populates="team", foreign_keys="User.team_id")
-    projects = relationship("TeamProject", back_populates="team", cascade="all, delete-orphan")
-
-class TeamProject(Base):
-    __tablename__ = "team_projects"
-
-    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True)
-    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True)
-
-    # Relationships
-    team = relationship("Team", back_populates="projects")
-    project = relationship("Project", back_populates="teams")
 
 class DiscoverySection(Base):
     __tablename__ = "discovery_sections"

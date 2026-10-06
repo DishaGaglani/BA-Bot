@@ -1,5 +1,20 @@
 version: '3.8'
 
+# Resource limits and worker count are sized for a small single-host deployment. Raise
+# backend cpus/mem_limit (and WEB_CONCURRENCY, which otherwise auto-sizes from these same
+# limits — see backend/gunicorn.conf.py) for a bigger server.
+#
+# Security baseline applied to both services: no-new-privileges, all Linux capabilities
+# dropped except the few each process actually needs, and init (an embedded tini) so
+# SIGTERM from `docker compose stop` reaches the app and triggers a graceful shutdown
+# instead of a hard kill after the stop timeout. CAP_KILL is part of that minimal set for
+# exactly that reason: tini runs as root and needs it to forward the signal to the app
+# process, which by then has dropped to an unprivileged user.
+#
+# Also runs unchanged under `podman-compose up --build` (see DOCKER_INSTRUCTIONS.md's Podman
+# section) — except in rootless mode, `frontend`'s "80:80" below needs one of the workarounds
+# documented there, since an unprivileged host user can't bind port 80 by default.
+
 services:
   backend:
     build:
@@ -7,6 +22,20 @@ services:
       dockerfile: Dockerfile
     container_name: ba-backend
     restart: always
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN    # entrypoint: fix ownership of volumes on first run / upgrade from an older image
+      - SETUID   # entrypoint: drop from root to the unprivileged app user
+      - SETGID
+      - KILL     # tini (init: true above) forwarding SIGTERM to that now-unprivileged process
+    pids_limit: 512
+    mem_limit: 1g
+    mem_reservation: 256m
+    cpus: 2
     environment:
       - ENV=production
       - HOST=0.0.0.0
@@ -21,6 +50,7 @@ services:
       - backend-uploads:/app/uploads
     expose:
       - "8000"
+    # Dockerfile's HEALTHCHECK (liveness only) is inherited; `depends_on` below waits for it.
 
   frontend:
     build:
@@ -28,10 +58,31 @@ services:
       dockerfile: Dockerfile
     container_name: ba-frontend
     restart: always
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE  # nginx master binds the privileged port 80
+      - CHOWN             # nginx master: drop worker processes to the unprivileged `nginx` user
+      - SETUID
+      - SETGID
+      - KILL              # tini forwarding SIGTERM, as above
+    pids_limit: 128
+    mem_limit: 128m
+    cpus: 1
     ports:
       - "80:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   backend-data:

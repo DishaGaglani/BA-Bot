@@ -60,7 +60,7 @@ def require_role(allowed_roles: list[UserRole]):
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db)
     ) -> User:
-        if current_user.role in [UserRole.SUPER_ADMIN, UserRole.ADMIN] or current_user.role in allowed_roles:
+        if current_user.role == UserRole.ADMIN or current_user.role in allowed_roles:
             return current_user
         
         # Log permission denied
@@ -90,72 +90,48 @@ def require_project_access(minimum_role: ProjectMemberRole):
                 detail="Project not found"
             )
         
-        # Admin override
-        if current_user.role in [UserRole.SUPER_ADMIN, UserRole.ADMIN]:
+        # Admin override: sees and acts on every project regardless of membership
+        if current_user.role == UserRole.ADMIN:
             return project
-            
-        # Check if project owner (owner always has OWNER role)
+
+        # Check if project owner (owner always has full MEMBER-level access)
         if project.owner_id == current_user.id:
             return project
-            
+
         # Check ProjectMember table
         member = db.query(ProjectMember).filter(
             ProjectMember.project_id == project_id,
             ProjectMember.user_id == current_user.id
         ).first()
-        
-        user_role = None
-        if member:
-            user_role = member.role
-        else:
-            # Check Team inheritance
-            if current_user.team_id:
-                from models import TeamProject, Team
-                team_project_link = db.query(TeamProject).filter(
-                    TeamProject.project_id == project_id,
-                    TeamProject.team_id == current_user.team_id
-                ).first()
-                
-                if team_project_link:
-                    # Resolve team member role inheritance
-                    team = db.query(Team).filter(Team.id == current_user.team_id).first()
-                    if team and team.manager_id == current_user.id:
-                        user_role = ProjectMemberRole.PROJECT_MANAGER
-                    elif current_user.role == UserRole.BUSINESS_ANALYST:
-                        user_role = ProjectMemberRole.BUSINESS_ANALYST
-                    else:
-                        user_role = ProjectMemberRole.CONTRIBUTOR
-                        
-        if not user_role:
+
+        if not member:
             # Log permission denied
             log_action(
                 db=db,
                 user_id=current_user.id,
                 action="permission denied",
                 project_id=project_id,
-                metadata={"reason": "User is not a member of this project and has no team permission"}
+                metadata={"reason": "User is not a member of this project"}
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have access to this project"
             )
-            
-        # Compare roles hierarchy
+
+        # Compare roles hierarchy (MEMBER can do everything VIEWER can, plus chat/edit)
         role_hierarchy = {
-            ProjectMemberRole.PROJECT_MANAGER: 4,
-            ProjectMemberRole.BUSINESS_ANALYST: 3,
-            ProjectMemberRole.CONTRIBUTOR: 2,
+            ProjectMemberRole.MEMBER: 2,
             ProjectMemberRole.VIEWER: 1
         }
-        
-        if role_hierarchy[user_role] < role_hierarchy[minimum_role]:  # type: ignore[index]
+
+        if role_hierarchy[member.role] < role_hierarchy[minimum_role]:
             # Log permission denied
             log_action(
                 db=db,
                 user_id=current_user.id,
                 action="permission denied",
                 project_id=project_id,
-                metadata={"reason": f"Required project role {minimum_role.value}, user had {user_role.value}"}
+                metadata={"reason": f"Required project role {minimum_role.value}, user had {member.role.value}"}
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -178,7 +154,7 @@ def require_project_owner(
             detail="Project not found"
         )
         
-    if current_user.role in [UserRole.SUPER_ADMIN, UserRole.ADMIN] or project.owner_id == current_user.id:
+    if current_user.role == UserRole.ADMIN or project.owner_id == current_user.id:
         return project
         
     # Log permission denied

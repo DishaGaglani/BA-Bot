@@ -55,11 +55,11 @@ const UserManagement: React.FC<UserManagementProps> = ({
   const [addName, setAddName] = useState('');
   const [addEmail, setAddEmail] = useState('');
   const [addPassword, setAddPassword] = useState('');
-  const [addRole, setAddRole] = useState('BUSINESS_ANALYST');
+  const [addRole, setAddRole] = useState('USER');
   const [addDept, setAddDept] = useState('IT');
 
   // Available options
-  const ROLES = ['SUPER_ADMIN', 'ADMIN', 'BUSINESS_ANALYST', 'PROJECT_MANAGER', 'VIEWER', 'REVIEWER'];
+  const ROLES = ['ADMIN', 'USER'];
   const DEPARTMENTS = ['IT', 'Product', 'Business Analysis', 'Finance', 'HR', 'Operations'];
 
   // Handle Edit click
@@ -105,7 +105,7 @@ const UserManagement: React.FC<UserManagementProps> = ({
       setAddName('');
       setAddEmail('');
       setAddPassword('');
-      setAddRole('BUSINESS_ANALYST');
+      setAddRole('USER');
       setAddDept('IT');
     } catch (err) {
       console.error(err);
@@ -159,12 +159,8 @@ const UserManagement: React.FC<UserManagementProps> = ({
 
   const getRoleBadgeClass = (r: string) => {
     switch (r) {
-      case 'SUPER_ADMIN': return 'badge danger';
       case 'ADMIN': return 'badge danger';
-      case 'BUSINESS_ANALYST': return 'badge primary';
-      case 'PROJECT_MANAGER': return 'badge indigo';
-      case 'VIEWER': return 'badge secondary';
-      case 'REVIEWER': return 'badge warning';
+      case 'USER': return 'badge primary';
       default: return 'badge secondary';
     }
   };
