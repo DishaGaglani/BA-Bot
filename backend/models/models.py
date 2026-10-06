@@ -1,4 +1,3 @@
-import datetime
 import enum
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Enum as SqlEnum, UniqueConstraint
 from sqlalchemy.orm import relationship
@@ -7,7 +6,7 @@ import os
 
 # Adjust path to import Base from database
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from database import Base
+from database import Base, utcnow
 
 class UserRole(str, enum.Enum):
     """Account-wide role. ADMIN can see and manage everything; USER is everyone else.
@@ -33,8 +32,8 @@ class User(Base):
     role = Column(SqlEnum(UserRole), default=UserRole.USER, nullable=False)
     department = Column(String, default="IT", nullable=True)
     status = Column(String, default="ACTIVE", nullable=True)
-    last_login = Column(DateTime, default=datetime.datetime.utcnow, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    last_login = Column(DateTime, default=utcnow, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
 
     # Relationships
     owned_projects = relationship("Project", back_populates="owner", cascade="all, delete-orphan")
@@ -56,8 +55,8 @@ class Project(Base):
     start_date = Column(DateTime, nullable=True)
     end_date = Column(DateTime, nullable=True)
     tags = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
     data = Column(Text, nullable=True)
     summary = Column(Text, nullable=True)
     structured_state = Column(Text, nullable=True)
@@ -93,7 +92,7 @@ class AuditLog(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     action = Column(String, nullable=False)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    timestamp = Column(DateTime, default=utcnow, nullable=False)
     metadata_json = Column(Text, nullable=True)  # renamed to avoid collision with SQLAlchemy metadata object
 
     # Relationships
@@ -109,7 +108,7 @@ class Message(Base):
     text = Column(Text, nullable=False)
     is_archived = Column(Boolean, default=False, nullable=False)
     token_count = Column(Integer, default=0, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
 
     # Relationships
     project = relationship("Project", back_populates="messages")

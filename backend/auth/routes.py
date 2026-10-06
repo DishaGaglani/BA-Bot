@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 import sys
@@ -6,11 +6,12 @@ import os
 import json
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from database import SessionLocal
+from database import SessionLocal, utcnow
 from models import User, UserRole
 from auth.jwt import hash_password, verify_password, create_access_token
 from services.audit import log_action
 from dependencies.auth import get_current_user, get_db
+from utils.rate_limit import limiter, RATE_LIMIT_AUTH
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -40,7 +41,8 @@ class LoginResponse(BaseModel):
     user: UserResponse
 
 @router.post("/register", response_model=UserResponse)
-def register(payload: UserRegisterRequest, db: Session = Depends(get_db)):
+@limiter.limit(RATE_LIMIT_AUTH)
+def register(request: Request, response: Response, payload: UserRegisterRequest, db: Session = Depends(get_db)):
     # Check if self-registration is enabled in system settings
     settings_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "system_settings.json")
     if os.path.exists(settings_path):
@@ -95,7 +97,8 @@ def register(payload: UserRegisterRequest, db: Session = Depends(get_db)):
     return new_user
 
 @router.post("/login", response_model=LoginResponse)
-def login(payload: UserLoginRequest, db: Session = Depends(get_db)):
+@limiter.limit(RATE_LIMIT_AUTH)
+def login(request: Request, response: Response, payload: UserLoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == payload.email).first()
     if not user or not verify_password(payload.password, user.password_hash):
         # Log failed login attempt
@@ -128,8 +131,7 @@ def login(payload: UserLoginRequest, db: Session = Depends(get_db)):
     token = create_access_token(data=token_data)
     
     # Update last login time
-    import datetime
-    user.last_login = datetime.datetime.utcnow()
+    user.last_login = utcnow()
     db.commit()
     
     # Log successful login

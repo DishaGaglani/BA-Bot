@@ -18,7 +18,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from database import engine, SessionLocal
 from utils.db_bootstrap import run_migration
-from utils.prod_ready import validate_environment, setup_global_exception_handlers, logger, request_with_retry
+from utils.prod_ready import validate_environment, setup_global_exception_handlers, logger, request_with_retry, MAX_REQUEST_BODY_BYTES, make_error_response
+from utils.rate_limit import limiter, RATE_LIMIT_PREDICT
 from utils import metrics, observability
 from utils.mock_llm import build_mock_response_text, generate_mock_stream_lines
 
@@ -54,26 +55,11 @@ app = FastAPI(title="BA Bot API", version="1.0.0")
 # Setup global exception handlers
 setup_global_exception_handlers(app)
 
-allowed_origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:5174",
-    "http://127.0.0.1:5174",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000"
-]
+# Rate limiting (brute-force / LLM-cost / spam protection on sensitive endpoints)
+app.state.limiter = limiter
+
 frontend_url = os.getenv("FRONTEND_URL")
-if frontend_url:
-    allowed_origins.extend([origin.strip() for origin in frontend_url.split(",") if origin.strip()])
-
 is_prod = os.getenv("ENV") == "production"
-
-if is_prod:
-    if frontend_url:
-        allowed_origins = [origin.strip() for origin in frontend_url.split(",") if origin.strip()]
-    else:
-        allowed_origins = []
-        logger.warning("CORS: FRONTEND_URL environment variable is not set in production. CORS requests will be blocked.")
 
 cors_kwargs = {
     "allow_credentials": True,
@@ -84,8 +70,15 @@ cors_kwargs = {
 }
 
 if is_prod:
-    cors_kwargs["allow_origins"] = allowed_origins
+    if frontend_url:
+        cors_kwargs["allow_origins"] = [origin.strip() for origin in frontend_url.split(",") if origin.strip()]
+    else:
+        cors_kwargs["allow_origins"] = []
+        logger.warning("CORS: FRONTEND_URL environment variable is not set in production. CORS requests will be blocked.")
 else:
+    # Local dev origins aren't fixed in code either: this matches any localhost/127.0.0.1
+    # port, so it doesn't need updating whenever a dev server (Vite, CRA, etc.) picks a
+    # different port, and still doesn't hardcode a specific origin list.
     cors_kwargs["allow_origin_regex"] = r"http://(localhost|127\.0\.0\.1)(:\d+)?"
 
 app.add_middleware(
@@ -103,6 +96,20 @@ async def standardize_responses_middleware(request: Request, call_next):
     # backend logs and the exported trace share a single id.
     trace_id = observability.resolve_trace_id(request.headers)
     request.state.trace_id = trace_id
+
+    # Reject oversized bodies before they're read into memory. This checks the
+    # client-supplied Content-Length header, so it doesn't catch a request sent
+    # with chunked transfer-encoding and no Content-Length — a true streaming
+    # byte-count cap would be needed to close that gap.
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > MAX_REQUEST_BODY_BYTES:
+        return make_error_response(
+            f"Request body exceeds the {MAX_REQUEST_BODY_BYTES}-byte limit.",
+            "PAYLOAD_TOO_LARGE",
+            trace_id,
+            413
+        )
+
     observability.tag_request(trace_id)
     trace_token = observability.trace_id_var.set(trace_id)
 
@@ -148,7 +155,7 @@ async def standardize_responses_middleware(request: Request, call_next):
     # Wrap successful JSON responses
     content_type = response.headers.get("content-type", "")
     if "application/json" in content_type and response.status_code < 400:
-        if request.url.path in ["/health", "/api/mock-predict"]:
+        if request.url.path in ["/health", "/health/live", "/health/ready", "/api/mock-predict"]:
             return response
             
         # Consume the response body stream
@@ -210,6 +217,49 @@ def prometheus_metrics(request: Request):
 
 PREDICTION_URL = os.getenv("PREDICTION_URL", "https://172.16.34.7:3000/api/v1/prediction/09ee3d2d-5d65-4793-a217-abd65e837366")
 
+# Liveness/readiness probes for orchestrators (Docker healthcheck, Kubernetes).
+# /health below also pings the LLM API, which is too slow and too chatty for a probe that
+# runs every few seconds, and an LLM outage must not get the container restarted.
+@app.get("/health/live")
+def health_live():
+    """Liveness: the process is up and serving requests. Touches no dependency."""
+    return {"status": "alive"}
+
+
+def _check_storage_writable() -> bool:
+    """Same write-then-remove probe validate_environment() does at startup, run again
+    here for readiness: on rootless Podman a bind-mounted volume can be readable but not
+    writable by this container's mapped UID/GID if the host-side subuid/subgid range
+    doesn't line up, and that failure mode wouldn't show up until the app actually tries
+    to write an upload."""
+    upload_dir = os.getenv("UPLOAD_DIR", "uploads")
+    try:
+        os.makedirs(upload_dir, exist_ok=True)
+        probe_file = os.path.join(upload_dir, ".health_ready_probe")
+        with open(probe_file, "w") as f:
+            f.write("probe")
+        os.remove(probe_file)
+        return True
+    except Exception:
+        return False
+
+
+@app.get("/health/ready")
+def health_ready(db: Session = Depends(get_db)):
+    """Readiness: the database answers and the upload volume is writable, so this
+    instance can actually take traffic."""
+    from sqlalchemy import text
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+
+    if not _check_storage_writable():
+        raise HTTPException(status_code=503, detail="Storage volume not writable")
+
+    return {"status": "ready"}
+
+
 # Health check route
 @app.get("/health")
 def health_check(db: Session = Depends(get_db)):
@@ -268,7 +318,9 @@ class MessageRequest(BaseModel):
     sessionId: str | None = None
 
 @app.post("/api/predict")
+@limiter.limit(RATE_LIMIT_PREDICT)
 def predict(
+    request: Request,
     payload: MessageRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -333,7 +385,9 @@ def predict(
     
     # 5. Deterministic gap analysis & section targeting
     state = get_structured_state(project)
-    gaps = analyze_gaps(state)
+    # Reuse this request's session: opening a second one while holding this one's connection
+    # starves the pool under load (every request holds one connection and waits for another).
+    gaps = analyze_gaps(state, db)
     active_section = gaps.get("current_section")
     
     # 6. Build optimized prompt
@@ -535,6 +589,10 @@ def predict(
         finally:
             metrics.CHAT_STREAMS_ACTIVE.dec()
             metrics.record_llm_call("chat_stream", time.perf_counter() - started, outcome_state["value"])
+
+    # Give the connection back before streaming. The dependency's session would otherwise stay
+    # checked out for the whole 30-90s LLM reply, and the stream uses its own session (bg_db).
+    db.close()
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
