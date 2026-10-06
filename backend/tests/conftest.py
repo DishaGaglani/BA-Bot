@@ -2,9 +2,12 @@
 
 The suite must never touch a developer's real data, so before the app is
 imported this module points it at a throwaway database and upload directory,
-and neutralises the startup migration. That last part matters:
-utils.migrate.run_migration() opens backend/ba_bot.db directly with sqlite3 and
-ignores DATABASE_URL, so letting it run would ALTER the real dev database.
+and neutralises the startup migration. That last part matters even though
+utils.db_bootstrap.run_migration() itself respects DATABASE_URL (unlike the old
+utils.migrate it replaced): the _schema fixture below already owns schema setup
+via Base.metadata.create_all(), and letting Alembic's own CREATE TABLE run again
+at app-import time, plus ensure_seed_data()'s demo accounts, would just be
+redundant work racing the fixtures rather than anything unsafe.
 """
 import atexit
 import copy
@@ -37,9 +40,9 @@ os.environ.update(
     }
 )
 
-import utils.migrate as _migrate  # noqa: E402
+import utils.db_bootstrap as _db_bootstrap  # noqa: E402
 
-_migrate.run_migration = lambda: None  # see module docstring
+_db_bootstrap.run_migration = lambda: None  # see module docstring
 
 import pytest  # noqa: E402
 import requests  # noqa: E402

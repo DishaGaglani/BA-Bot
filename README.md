@@ -157,7 +157,7 @@ ba-agent/
 │   │   ├── prompt_builder.py     # Assembles the per-turn LLM prompt
 │   │   └── fdr_summary.py        # Transcript → FDR JSON for export
 │   ├── utils/
-│   │   ├── prod_ready.py         # Retry/backoff, startup validation, global error handlers
+│   │   ├── telemetry.py          # Logging/trace IDs, retry/backoff, startup validation, global error handlers
 │   │   ├── migrate.py            # Startup DB schema migration + seeding
 │   │   ├── export.py             # Generic Markdown → DOCX/PDF
 │   │   └── fdr_docx.py           # Fixed-template FDR Word document builder

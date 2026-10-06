@@ -45,7 +45,9 @@ class TestEngineConfiguration:
         return json.loads(out.stdout.strip().splitlines()[-1])["kwargs"]
 
     def test_sqlite_allows_use_across_request_threads(self):
-        assert self._engine_kwargs("sqlite:///x.db")["connect_args"] == {"check_same_thread": False}
+        # timeout=15 is the SQLite busy_timeout (issue 6): how long a connection waits for
+        # another writer's lock before raising "database is locked".
+        assert self._engine_kwargs("sqlite:///x.db")["connect_args"] == {"check_same_thread": False, "timeout": 15}
 
     def test_sqlite_only_options_are_not_sent_to_other_databases(self):
         assert "check_same_thread" not in self._engine_kwargs("postgresql://u:p@db/app").get("connect_args", {})
@@ -217,3 +219,64 @@ class TestPredictStreamDoesNotBlockTheSharedThreadpool:
 
         peak_shared = anyio.run(_main)
         assert peak_shared > 0, "the old path should have drawn from the shared limiter"
+
+
+# ------------------------------------------------------------------ deployment review: health probe separation
+class TestHealthCheckSeparation:
+    def test_liveness_touches_neither_the_database_nor_storage(self, client, monkeypatch):
+        import app as backend_app
+
+        def _boom():
+            raise RuntimeError("a liveness check must never touch a dependency")
+
+        monkeypatch.setattr(backend_app, "_check_storage_writable", _boom)
+
+        statements = []
+        listener = lambda conn, cursor, statement, *a: statements.append(statement)
+        event.listen(engine, "before_cursor_execute", listener)
+        try:
+            r = client.get("/health/live")
+        finally:
+            event.remove(engine, "before_cursor_execute", listener)
+
+        assert r.status_code == 200
+        assert r.json()["status"] == "alive"
+        assert statements == [], f"/health/live queried the database: {statements}"
+
+    def test_readiness_succeeds_when_db_and_storage_are_both_fine(self, client):
+        r = client.get("/health/ready")
+        assert r.status_code == 200
+        assert r.json()["status"] == "ready"
+
+    def test_readiness_fails_when_the_database_is_down(self, client):
+        import app as backend_app
+        from dependencies.auth import get_db
+
+        class _BrokenSession:
+            def execute(self, *a, **k):
+                raise RuntimeError("db is down")
+
+        def _broken_get_db():
+            yield _BrokenSession()
+
+        backend_app.app.dependency_overrides[get_db] = _broken_get_db
+        try:
+            r = client.get("/health/ready")
+        finally:
+            backend_app.app.dependency_overrides.pop(get_db, None)
+
+        assert r.status_code == 503
+        assert "Database" in r.json()["message"]
+
+    def test_readiness_fails_when_storage_is_not_writable(self, client, monkeypatch):
+        import app as backend_app
+
+        monkeypatch.setattr(backend_app, "_check_storage_writable", lambda: False)
+        r = client.get("/health/ready")
+        assert r.status_code == 503
+        assert "Storage" in r.json()["message"]
+
+    def test_combined_health_endpoint_still_works_for_backward_compatibility(self, client):
+        r = client.get("/health")
+        assert r.status_code == 200
+        assert set(r.json().keys()) >= {"status", "database", "aiService"}

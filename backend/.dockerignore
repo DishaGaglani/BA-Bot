@@ -12,3 +12,9 @@ regression_results.json
 .env.*
 .DS_Store
 .git/
+tests/
+pytest.ini
+requirements-dev.txt
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
