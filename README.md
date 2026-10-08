@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🤖 BA-Bot — AI Business Analyst Agent
+# BA-Bot — AI Business Analyst Agent
 
 **Automate your requirements discovery. Talk to an AI. Export a polished FDR document.**
 
@@ -15,61 +15,61 @@
 
 ---
 
-## 📌 What is BA-Bot?
+## What is BA-Bot?
 
 BA-Bot is a full-stack AI-powered tool built for **Business Analysts, Product Managers, and Project Leads** at L&T PES.
 
 Instead of spending hours in manual requirement-gathering workshops, you simply **have a conversation** with an AI agent. It asks the right questions one at a time, tracks what's still missing, extracts structured data as you talk, and — when the interview is complete — compiles everything into a polished Requirements Discovery document.
 
-> 💡 **The core idea:** Replace hours of manual elicitation sessions with a smart conversational AI that extracts, structures, and exports your requirements in minutes — with role-based access and an admin control panel on top.
+> **The core idea:** Replace hours of manual elicitation sessions with a smart conversational AI that extracts, structures, and exports your requirements in minutes — with role-based access and an admin control panel on top.
 
 ---
 
-## ✨ Features
+## Features
 
-### 🗂️ Multi-Project Dashboard
+### Multi-Project Dashboard
 Manage multiple active projects from a single interface, each showing real-time completion progress, department, sponsor, and status.
 
-### 🔐 Role-Based Access
+### Role-Based Access
 Two account-wide roles — `ADMIN` (sees and manages everything) and `USER` (everyone else) — combined with per-project roles — `MEMBER` (can chat with the bot and edit) and `VIEWER` (read-only). A user reaches a project via direct ownership or an explicit invite; there's no team layer.
 
-### 💬 AI Interview Workspace
+### AI Interview Workspace
 A chat interface driven by a **Forjinn AI flow** (LLM backend), streamed token-by-token in real time over **Server-Sent Events (SSE)**. The AI asks one structured question at a time, guided by a deterministic gap-analysis engine that tracks which topic (project info, stakeholders, functional requirements, constraints, etc.) still needs answers.
 
-### 🧠 Structured State Extraction
+### Structured State Extraction
 As the interview progresses, every turn triggers a second, silent AI call that extracts *only what changed* into a structured JSON state — no manual form-filling, no copy-pasting.
 
-### ✅ Publish & Lock
+### Publish & Lock
 Projects move through `DRAFT → PUBLISHED`. There's no approval/review stage — any project MEMBER (or the owner, or an admin) can publish once they're satisfied; publishing locks the project from further edits.
 
-### 📋 Requirements Review Panel
+### Requirements Review Panel
 Review all captured data before finalizing, with live progress indicators across every tracked discovery section.
 
-### 📄 One-Click Document Export
+### One-Click Document Export
 Generate a **Final Discovery Requirements (FDR)** document with one click:
 - **DOCX** — a fixed, template-matching Word document (python-docx), with any never-discussed field rendered as `[MISSING]` so gaps are obvious.
 - **PDF** — the AI writes a full polished document in Markdown, rendered to PDF (ReportLab) with custom typography.
 
-### 🛠️ Admin Control Panel
+### Admin Control Panel
 User management, project administration (archive/restore/lock/clone/ownership transfer), audit logs, system settings (including the AI's base system prompt and self-registration toggle), a role/permission matrix editor, and analytics — all under `/api/admin/*`.
 
-### 📊 Analytics Dashboard
+### Analytics Dashboard
 Tracks total users/projects, AI token usage and estimated cost, a 7-day activity chart, and department breakdowns.
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```mermaid
 flowchart TD
-    A["👤 User logs in"] --> B["🗂️ Opens or creates a project"]
-    B --> C["💬 Chats with the AI interviewer"]
+    A["User logs in"] --> B["Opens or creates a project"]
+    B --> C["Chats with the AI interviewer"]
     C --> D{"All sections\nanswered?"}
     D -- "No — ask next question" --> C
-    D -- "Yes" --> E["📋 Reviews the captured requirements"]
-    E --> F["📄 Exports as Word / PDF document"]
-    F --> G["🔒 Publishes & locks the project"]
-    C -. "📄 can export anytime,\neven mid-interview —\ngaps just show as [MISSING]" .-> F
+    D -- "Yes" --> E["Reviews the captured requirements"]
+    E --> F["Exports as Word / PDF document"]
+    F --> G["Publishes & locks the project"]
+    C -. "can export anytime,\neven mid-interview —\ngaps just show as [MISSING]" .-> F
 ```
 
 **In plain terms:** you log in, open a project, and just talk to the AI — it keeps asking questions until every section (stakeholders, requirements, constraints, etc.) is covered. Once done, you review what it captured, export it as a document, and publish it, which locks it from further edits — there's no separate approval/review step. **Exporting isn't gated on completion** — the dotted line shows you can generate a document at any point in the conversation, and whatever hasn't been discussed yet just shows up as `[MISSING]` instead of blocking the export.
@@ -78,7 +78,7 @@ Behind the scenes, every chat message is permission-checked, sent to the AI toge
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 ### What's actually used
 
@@ -128,7 +128,7 @@ Behind the scenes, every chat message is permission-checked, sent to the AI toge
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 ba-agent/
@@ -192,7 +192,7 @@ ba-agent/
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 - **Node.js** v18+
@@ -234,7 +234,7 @@ See [`DOCKER_INSTRUCTIONS.md`](DOCKER_INSTRUCTIONS.md) for environment configura
 
 ---
 
-## 🔌 API Reference
+## API Reference
 
 ### Auth — `/api/auth`
 | Method | Route | Description |
@@ -269,7 +269,7 @@ Users, permissions, audit logs, project administration (archive/restore/lock/clo
 
 ---
 
-## 🔭 Observability
+## Observability
 
 Everything below is opt-in and degrades to a no-op when unconfigured.
 
@@ -294,7 +294,7 @@ Scrape config: `scrape_configs: [{job_name: ba-bot, metrics_path: /metrics, stat
 
 ---
 
-## 🗃️ Data Model (structured state)
+## Data Model (structured state)
 
 Each project's live requirements data is stored as a structured JSON object in `Project.structured_state`, evolved turn-by-turn by the AI as the interview progresses:
 
@@ -329,7 +329,7 @@ The frontend still consumes an older, flatter JSON shape (`project`/`overview`/`
 
 ---
 
-## ⚠️ Known rough edges
+## Known rough edges
 
 - **`PREDICTION_URL`'s default value is duplicated** across five files (`app.py`, `routes/projects.py`, `services/summary_manager.py`, `services/project_state_manager.py`, `services/fdr_summary.py`) instead of a single shared config constant.
 - **The `role_permissions.json` matrix** (editable from Admin → Roles & Permissions) doesn't appear to be checked anywhere in actual route logic — access control is enforced via `require_role`/`require_project_access` instead, so the matrix may currently be informational only.
@@ -339,6 +339,6 @@ The frontend still consumes an older, flatter JSON shape (`project`/`overview`/`
 
 ---
 
-## 📄 License
+## License
 
 Internal tool — L&T PES.
