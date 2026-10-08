@@ -21,7 +21,7 @@ BA-Bot is a full-stack AI-powered tool built for **Business Analysts, Product Ma
 
 Instead of spending hours in manual requirement-gathering workshops, you simply **have a conversation** with an AI agent. It asks the right questions one at a time, tracks what's still missing, extracts structured data as you talk, and — when the interview is complete — compiles everything into a polished Requirements Discovery document.
 
-> 💡 **The core idea:** Replace hours of manual elicitation sessions with a smart conversational AI that extracts, structures, and exports your requirements in minutes — with multi-user roles, team-based access, an approval workflow, and an admin control panel on top.
+> 💡 **The core idea:** Replace hours of manual elicitation sessions with a smart conversational AI that extracts, structures, and exports your requirements in minutes — with role-based access and an admin control panel on top.
 
 ---
 
@@ -31,7 +31,7 @@ Instead of spending hours in manual requirement-gathering workshops, you simply 
 Manage multiple active projects from a single interface, each showing real-time completion progress, department, sponsor, and status.
 
 ### 🔐 Role-Based Access
-System-wide roles (Super Admin, Admin, Business Analyst, Project Manager, Reviewer, Viewer) combined with per-project roles (Project Manager, Business Analyst, Contributor, Viewer) and team-based inherited access — a user can reach a project via direct ownership, an explicit invite, or membership on a team assigned to that project.
+Two account-wide roles — `ADMIN` (sees and manages everything) and `USER` (everyone else) — combined with per-project roles — `MEMBER` (can chat with the bot and edit) and `VIEWER` (read-only). A user reaches a project via direct ownership or an explicit invite; there's no team layer.
 
 ### 💬 AI Interview Workspace
 A chat interface driven by a **Forjinn AI flow** (LLM backend), streamed token-by-token in real time over **Server-Sent Events (SSE)**. The AI asks one structured question at a time, guided by a deterministic gap-analysis engine that tracks which topic (project info, stakeholders, functional requirements, constraints, etc.) still needs answers.
@@ -39,8 +39,8 @@ A chat interface driven by a **Forjinn AI flow** (LLM backend), streamed token-b
 ### 🧠 Structured State Extraction
 As the interview progresses, every turn triggers a second, silent AI call that extracts *only what changed* into a structured JSON state — no manual form-filling, no copy-pasting.
 
-### ✅ Approval Workflow
-Projects move through `DRAFT → PENDING_REVIEW → APPROVED → PUBLISHED`. A Reviewer/Admin approves or rejects; once published, a project is locked from further edits.
+### ✅ Publish & Lock
+Projects move through `DRAFT → PUBLISHED`. There's no approval/review stage — any project MEMBER (or the owner, or an admin) can publish once they're satisfied; publishing locks the project from further edits.
 
 ### 📋 Requirements Review Panel
 Review all captured data before finalizing, with live progress indicators across every tracked discovery section.
@@ -51,7 +51,7 @@ Generate a **Final Discovery Requirements (FDR)** document with one click:
 - **PDF** — the AI writes a full polished document in Markdown, rendered to PDF (ReportLab) with custom typography.
 
 ### 🛠️ Admin Control Panel
-User management, team management, audit logs, system settings (including the AI's base system prompt and self-registration toggle), a role/permission matrix editor, and per-team analytics — all under `/api/admin/*`.
+User management, project administration (archive/restore/lock/clone/ownership transfer), audit logs, system settings (including the AI's base system prompt and self-registration toggle), a role/permission matrix editor, and analytics — all under `/api/admin/*`.
 
 ### 📊 Analytics Dashboard
 Tracks total users/projects, AI token usage and estimated cost, a 7-day activity chart, and department breakdowns.
@@ -68,12 +68,11 @@ flowchart TD
     D -- "No — ask next question" --> C
     D -- "Yes" --> E["📋 Reviews the captured requirements"]
     E --> F["📄 Exports as Word / PDF document"]
-    F --> G["✅ Submits for approval"]
-    G --> H["🔒 Published & locked"]
+    F --> G["🔒 Publishes & locks the project"]
     C -. "📄 can export anytime,\neven mid-interview —\ngaps just show as [MISSING]" .-> F
 ```
 
-**In plain terms:** you log in, open a project, and just talk to the AI — it keeps asking questions until every section (stakeholders, requirements, constraints, etc.) is covered. Once done, you review what it captured, export it as a document, and send it through approval before it's published. **Exporting isn't gated on completion** — the dotted line shows you can generate a document at any point in the conversation, and whatever hasn't been discussed yet just shows up as `[MISSING]` instead of blocking the export.
+**In plain terms:** you log in, open a project, and just talk to the AI — it keeps asking questions until every section (stakeholders, requirements, constraints, etc.) is covered. Once done, you review what it captured, export it as a document, and publish it, which locks it from further edits — there's no separate approval/review step. **Exporting isn't gated on completion** — the dotted line shows you can generate a document at any point in the conversation, and whatever hasn't been discussed yet just shows up as `[MISSING]` instead of blocking the export.
 
 Behind the scenes, every chat message is permission-checked, sent to the AI together with a summary of what's already been discussed, and the AI's reply is scanned to update the project's data automatically. A more technical breakdown of that pipeline (prompts, retries, state extraction) lives in [`docs/architecture.md`](docs/architecture.md).
 
@@ -95,6 +94,7 @@ Behind the scenes, every chat message is permission-checked, sent to the AI toge
 | **Backend framework** | FastAPI | 0.115 | Async REST API |
 | **ASGI server** | Uvicorn | 0.30 | Runs the FastAPI app, with `reload=True` outside production |
 | **ORM** | SQLAlchemy | 2.0 | Declarative models + session management |
+| **Migrations** | Alembic | 1.20 | Versioned schema migrations (`backend/migrations/`), run automatically at startup |
 | **Database** | SQLite | 3 | Single-file DB (`ba_bot.db`), path overridable via `DATABASE_URL` |
 | **Auth** | PyJWT + bcrypt | 2.9 / 4.2 | Stateless JWT sessions (24h expiry), bcrypt password hashing |
 | **DOCX generation** | python-docx | 1.1.2 | Structured Requirement Discovery Form output |
@@ -116,8 +116,7 @@ Behind the scenes, every chat message is permission-checked, sent to the AI toge
 | **Axios (or any HTTP client library)** | Native `fetch` | No HTTP client dependency beyond the browser built-in. |
 | **WebSockets** | Server-Sent Events (SSE) | Streaming is one-directional (server → client), which is all SSE needs — no bidirectional socket layer. |
 | **GraphQL** | Plain REST (`/api/...` JSON endpoints) | No schema/resolver layer. |
-| **Alembic (or any migration framework)** | Hand-rolled `utils/migrate.py` | Runs `ALTER TABLE` statements guarded by try/except at every startup — no versioned migration history. |
-| **PostgreSQL / MySQL** | SQLite | `DATABASE_URL` env var *could* point elsewhere, but nothing in the code assumes a non-SQLite dialect (the migration script uses raw `sqlite3` calls directly). |
+| **PostgreSQL / MySQL** | SQLite | `DATABASE_URL` env var *could* point elsewhere, but nothing in the code assumes a non-SQLite dialect. |
 | **Redis / Memcached (caching layer)** | None | Every request hits the DB directly; no cache invalidation logic exists. |
 | **Celery / RQ / any task queue** | In-process background work via FastAPI's request lifecycle | The post-chat state update runs inside the same streaming generator function using a second DB session — not a separate worker process. |
 | **OpenAI SDK / LangChain / any LLM SDK** | Raw `requests` calls to a Forjinn REST endpoint | The LLM integration is a plain HTTP POST with a `question`/`streaming` JSON body — no abstraction layer, no prompt-template framework. |
@@ -145,8 +144,8 @@ ba-agent/
 │   │   ├── models.py             # All SQLAlchemy tables
 │   │   └── __init__.py
 │   ├── routes/
-│   │   ├── projects.py           # /api/projects/* — CRUD, export, workflow, invites
-│   │   └── admin.py              # /api/admin/* — users, teams, settings, analytics, discovery sections
+│   │   ├── projects.py           # /api/projects/* — CRUD, export, publish/lock, invites
+│   │   └── admin.py              # /api/admin/* — users, settings, analytics, discovery sections
 │   ├── services/
 │   │   ├── audit.py              # AuditLog writer
 │   │   ├── rbac_service.py       # Role → permission matrix (role_permissions.json)
@@ -156,9 +155,14 @@ ba-agent/
 │   │   ├── project_state_manager.py  # Structured requirements state engine
 │   │   ├── prompt_builder.py     # Assembles the per-turn LLM prompt
 │   │   └── fdr_summary.py        # Transcript → FDR JSON for export
+│   ├── migrations/                # Alembic migration history (schema is owned by Alembic, not hand-written SQL)
+│   ├── alembic.ini
 │   ├── utils/
-│   │   ├── telemetry.py          # Logging/trace IDs, retry/backoff, startup validation, global error handlers
-│   │   ├── migrate.py            # Startup DB schema migration + seeding
+│   │   ├── prod_ready.py         # Logging/trace IDs, retry/backoff, startup validation, global error handlers
+│   │   ├── db_bootstrap.py       # Runs pending Alembic migrations + seeds default data at startup
+│   │   ├── observability.py     # OpenTelemetry tracing, Sentry error tracking, log redaction
+│   │   ├── metrics.py            # Prometheus metrics
+│   │   ├── rate_limit.py         # Shared slowapi limiter instance
 │   │   ├── export.py             # Generic Markdown → DOCX/PDF
 │   │   └── fdr_docx.py           # Fixed-template FDR Word document builder
 │   ├── e2e_tester.py             # Manual smoke-test script (not pytest)
@@ -170,7 +174,7 @@ ba-agent/
 │   │   ├── App.css / index.css    # Design system
 │   │   ├── config.ts              # Frontend runtime config
 │   │   ├── main.tsx                # React DOM mount
-│   │   └── admin/                  # Admin portal: Dashboard, UserManagement, TeamManagement,
+│   │   └── admin/                  # Admin portal: Dashboard, UserManagement, ProjectManagement,
 │   │                                # RolesPermissions, SettingsPanel, AnalyticsPanel, etc.
 │   ├── nginx.conf                  # Production static-file serving config
 │   ├── index.html
@@ -249,9 +253,7 @@ See [`DOCKER_INSTRUCTIONS.md`](DOCKER_INSTRUCTIONS.md) for environment configura
 | `PUT` | `/{id}` | Update a project (or reset its session) |
 | `DELETE` | `/{id}` | Delete a project (owner/admin only) |
 | `GET` | `/{id}/export?format=docx\|pdf` | Export the requirements document |
-| `POST` | `/{id}/submit` | Move to `PENDING_REVIEW` |
-| `POST` | `/{id}/review` | Approve/reject (Reviewer/Admin only) |
-| `POST` | `/{id}/publish` | Publish + lock (approved projects only) |
+| `POST` | `/{id}/publish` | Publish + lock — any project MEMBER, the owner, or an admin; no approval step |
 | `POST` | `/{id}/invite` | Invite a member with a specific project role |
 | `GET` | `/{id}/members` | List project members |
 
@@ -262,8 +264,8 @@ See [`DOCKER_INSTRUCTIONS.md`](DOCKER_INSTRUCTIONS.md) for environment configura
 | `GET` | `/health` | Health check |
 | `*` | `/api/mock-predict` | Local fallback LLM stand-in (used when Forjinn is unreachable) |
 
-### Admin — `/api/admin` (Admin/Super Admin only)
-Users, permissions, audit logs, project administration (archive/restore/lock/clone/ownership transfer), conversations, documents, analytics, system settings, teams, and discovery sections. See [`backend/routes/admin.py`](backend/routes/admin.py) for the full list (~50 endpoints).
+### Admin — `/api/admin` (Admin only)
+Users, permissions, audit logs, project administration (archive/restore/lock/clone/ownership transfer), conversations, documents, analytics, system settings, and discovery sections. See [`backend/routes/admin.py`](backend/routes/admin.py) for the full list (~30 endpoints).
 
 ---
 
