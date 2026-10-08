@@ -29,6 +29,16 @@ network calls, and stubs the LLM, so it never touches `ba_bot.db` or the Forjinn
 A test marked `pending_fix(...)` asserts behavior that is only correct once a specific fix is merged. It is expected to
 fail until then; when the fix lands it starts passing, pytest reports that as a failure, and the marker should be removed.
 
+## CI checks (run locally)
+
+Pull requests run `.github/workflows/ci.yml`. To reproduce the backend gates:
+
+```bash
+pip install ruff mypy types-requests
+ruff check .   # config: ruff.toml (correctness rules only)
+mypy .         # config: mypy.ini
+```
+
 ## Database schema changes
 
 Schema is managed by [Alembic](https://alembic.sqlalchemy.org/) (`backend/migrations/`), not hand-written SQL. `app.py` runs pending migrations automatically on startup (`utils/db_bootstrap.py`), so you don't need to run anything by hand for an existing change to take effect.

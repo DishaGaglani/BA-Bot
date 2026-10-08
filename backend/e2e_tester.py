@@ -204,7 +204,7 @@ def run_e2e_validation():
     try:
         res = requests.post(f"{BASE_URL}/api/predict", headers=headers_ba, json={
             "projectId": project_id,
-            "question": f"The project name is Retail Logistics System and we are in logistics domain.",
+            "question": "The project name is Retail Logistics System and we are in logistics domain.",
             "sessionId": f"session_{project_id}"
         })
         time.sleep(2)

@@ -2,7 +2,6 @@
 import re
 
 import pytest
-from fastapi.routing import APIRoute
 
 import app as backend_app
 from models import AuditLog, Project, ProjectMember, ProjectMemberRole, UserRole
@@ -14,11 +13,16 @@ MISSING = 999999
 
 
 def _admin_routes():
+    # Walking app.routes directly used to find every APIRoute flattened onto the app, but
+    # include_router now wraps each sub-router opaquely, so the OpenAPI schema (a stable,
+    # public FastAPI API) is used instead of reaching into routing internals.
     found = []
-    for route in backend_app.app.routes:
-        if isinstance(route, APIRoute) and route.path.startswith("/api/admin"):
-            for method in route.methods - {"HEAD", "OPTIONS"}:
-                found.append((method, route.path))
+    for path, operations in backend_app.app.openapi()["paths"].items():
+        if not path.startswith("/api/admin"):
+            continue
+        for method in operations:
+            if method.upper() not in ("HEAD", "OPTIONS"):
+                found.append((method.upper(), path))
     return sorted(found)
 
 
