@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fixture JWT used only to test log-scrubbing (not a real credential)"
+regexes = [
+  '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiJ1c2VyQHguY29tIn0\.c2lnbmF0dXJlMTIz''',
+]
