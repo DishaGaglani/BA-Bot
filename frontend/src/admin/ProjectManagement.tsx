@@ -15,6 +15,7 @@ export interface ProjectData {
   status: string;
   tags: string;
   member_count: number;
+  locked: boolean;
   created_at: string;
 }
 

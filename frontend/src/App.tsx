@@ -67,6 +67,8 @@ interface ProjectData {
     business_goals: string
     desired_outcomes: string
     constraints: string
+    budget: string
+    integrations: string[]
   }
   functional_requirements: Requirement[]
   missing_fields: string[]
@@ -110,6 +112,8 @@ const initialProject: ProjectData = {
     business_goals: '',
     desired_outcomes: '',
     constraints: '',
+    budget: '',
+    integrations: [],
   },
   functional_requirements: [],
   missing_fields: [],
@@ -140,6 +144,8 @@ const sanitizeProjectData = (data: any): ProjectData => {
       business_goals: data?.discovery?.business_goals || '',
       desired_outcomes: data?.discovery?.desired_outcomes || '',
       constraints: data?.discovery?.constraints || '',
+      budget: data?.discovery?.budget || '',
+      integrations: data?.discovery?.integrations || [],
     },
     functional_requirements: data?.functional_requirements || [],
     missing_fields: data?.missing_fields || [],

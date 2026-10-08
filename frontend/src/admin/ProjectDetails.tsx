@@ -52,6 +52,7 @@ interface ProjectDetailState {
     tags: string;
     owner_name: string;
     owner_email: string;
+    locked: boolean;
     created_at: string;
   };
   members: Member[];
