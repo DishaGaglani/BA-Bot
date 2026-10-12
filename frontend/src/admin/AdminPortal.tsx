@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { API_BASE_URL } from '../config';
+import { API_BASE_URL, unwrapApiResponse } from '../config';
 import AdminLayout from './AdminLayout';
 import Dashboard from './Dashboard';
 import UserManagement, { User } from './UserManagement';
@@ -63,7 +63,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await unwrapApiResponse(res);
         setUsersList(data);
       }
     } catch (err) {
@@ -81,7 +81,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await unwrapApiResponse(res);
         setLogsList(data);
       }
     } catch (err) {
@@ -99,7 +99,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await unwrapApiResponse(res);
         setPermissionsMatrix(data);
       }
     } catch (err) {
@@ -117,7 +117,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await unwrapApiResponse(res);
         setDashboardStats(data);
       }
     } catch (err) {

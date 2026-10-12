@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { API_BASE_URL } from '../config';
+import { API_BASE_URL, unwrapApiResponse } from '../config';
 
 interface RoleDistribution {
   role: string;
@@ -44,7 +44,7 @@ const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({ token }) => {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
-        const payload = await res.json();
+        const payload = await unwrapApiResponse(res);
         setData(payload);
       }
     } catch (err) {

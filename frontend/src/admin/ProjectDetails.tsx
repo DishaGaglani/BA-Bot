@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { API_BASE_URL } from '../config';
+import { API_BASE_URL, unwrapApiResponse } from '../config';
 
 interface ProjectDetailsProps {
   token: string;
@@ -82,7 +82,7 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await unwrapApiResponse(res);
         setDetails(data);
       }
     } catch (err) {
