@@ -1,5 +1,5 @@
 # ---- Stage 1: build the Python environment -----------------------------------------------
-FROM python:3.11-slim AS builder
+FROM python:3.14-slim AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -11,7 +11,7 @@ RUN /opt/venv/bin/pip install -r requirements.txt
 
 # ---- Stage 2: minimal runtime image ------------------------------------------------------
 # Only the finished virtualenv is copied over: no compiler, no pip cache, no build tools.
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
